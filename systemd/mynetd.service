@@ -1,0 +1,21 @@
+# E-7：非 OpenWrt 平台 systemd 单元
+# mynetd 纯通信层；系统能力在 mynet（按需 sudo）
+[Unit]
+Description=MyNet daemon (transport only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/mynet/bin/mynetd
+Restart=on-failure
+RestartSec=5
+# 非 root（D-8）；写路由时单独 sudo mynet apply
+User=mynet
+Group=mynet
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/mynet
+
+[Install]
+WantedBy=multi-user.target
