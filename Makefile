@@ -5,12 +5,10 @@
 .PHONY: lint test guard check install-hooks
 
 lint:
-	@echo "▸ lint"
-	@echo "(S9 补全：shellcheck / 打包校验)"
+	@sh scripts/check.sh lint
 
 test:
-	@echo "▸ test"
-	@echo "(S9 补全)"
+	@sh scripts/check.sh test
 
 guard:
 	@echo "▸ guard（安全红线）"
