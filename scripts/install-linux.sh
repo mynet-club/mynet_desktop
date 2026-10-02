@@ -24,7 +24,7 @@ fi
 
 for b in mynet mynetd; do
   src=""
-  for c in "$SCRIPT_DIR/dist/mynet_agent_"*/$b; do
+  for c in "$SCRIPT_DIR/dist/mynet_agent_"*/"$b"; do
     if [ -f "$c" ]; then src=$c; break; fi
   done
   if [ -z "$src" ]; then

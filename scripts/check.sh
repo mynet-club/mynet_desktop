@@ -32,7 +32,7 @@ lint_shell() {
     [ -f "$f" ] || continue
     case "$(head -1 "$f")" in
       *bash*) _i=bash ;;
-      *)      _i=sh ;;
+      *)      _i="sh" ;;
     esac
     if ! command -v "$_i" >/dev/null 2>&1; then
       skipped "${_i} 不可用 —— $(basename "$f") 的语法本次未检查"
@@ -77,6 +77,7 @@ lint_systemd() {
 
   # 跨文件一致性：unit 的 ExecStart 必须指向 install-linux.sh 的默认 PREFIX。
   # 两边任一处改了路径，服务就会起不来，而这种断裂**没有任何运行期报错**。
+  # shellcheck disable=SC2016  # sed 程序里的 ${PREFIX:-...} 是要匹配的字面量，故意不展开
   _prefix=$(sed -n 's/^PREFIX="${PREFIX:-\([^}]*\)}".*/\1/p' "$ROOT/scripts/install-linux.sh" | head -1)
   _exec=$(grep '^ExecStart=' "$_u" | head -1 | cut -d= -f2)
   if [ -z "$_prefix" ]; then
