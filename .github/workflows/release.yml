@@ -1,0 +1,334 @@
+name: Release Installers
+
+# 打三平台安装器并挂到 GitHub Release（E-7）。
+#
+# 触发：
+#   · push tag  v*          —— 正式发版
+#   · workflow_dispatch     —— 手工出包（可传 agent ref / 版本号）
+#
+# 跨仓：二进制来自 mynet_agent-V2，安装器脚本在本仓。
+# tag 发版时优先用同名 tag 的 agent；没有就用 agent 的默认分支。
+#
+# 平台分工（不能省，工具链是 OS 绑定的）：
+#   build-binaries   ubuntu     make dist（含 windows 交叉编译）
+#   package-linux    ubuntu     校验 tgz（真包已在 build 产出）
+#   package-windows  ubuntu     makensis 交叉编 NSIS .exe
+#   package-macos    macos-14   pkgbuild + hdiutil（必须 macOS）
+#   publish          ubuntu     归并产物 → GitHub Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      agent_ref:
+        description: "mynet_agent-V2 的 git ref（tag/branch/sha），留空则用同名 tag 或默认分支"
+        required: false
+        default: ""
+      version:
+        description: "产物版本号（须以 v 开头，如 v1.0.0）；留空则从 tag / run number 推"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  GO_VERSION: "1.22"
+  AGENT_REPO: mynet-club/mynet_agent-V2
+
+jobs:
+  # ── 版本号：tag 优先；手工跑时用输入或 v0.0.0-ci.<run> ──────────
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      agent_ref: ${{ steps.ver.outputs.agent_ref }}
+    steps:
+      - name: Resolve version & agent ref
+        id: ver
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            V="${GITHUB_REF_NAME}"
+            AGENT_REF="${GITHUB_REF_NAME}"
+          else
+            V="${{ github.event.inputs.version }}"
+            if [ -z "$V" ]; then
+              V="v0.0.0-ci.${{ github.run_number }}"
+            fi
+            AGENT_REF="${{ github.event.inputs.agent_ref }}"
+            if [ -z "$AGENT_REF" ]; then
+              AGENT_REF=""
+            fi
+          fi
+          # ctl 的 parseFilename 要求版本段以小写 v 开头
+          case "$V" in
+            v*) ;;
+            *) echo "版本号必须以 v 开头：$V" >&2; exit 1 ;;
+          esac
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "agent_ref=$AGENT_REF" >> "$GITHUB_OUTPUT"
+          echo "version=$V agent_ref=${AGENT_REF:-'(auto)'}"
+
+  # ── 二进制：make dist（6 平台，含 windows .exe）──────────────
+  build-binaries:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout mynet_desktop (packaging)
+        uses: actions/checkout@v4
+        with:
+          path: mynet_desktop
+
+      - name: Checkout mynet_agent (binaries)
+        # 同名 tag 不一定存在于 agent 仓（只打了 desktop 的 tag）。
+        # 先试 ref，失败则退回默认分支 —— 不能让整个发布挂在这上面。
+        uses: actions/checkout@v4
+        continue-on-error: true
+        id: agent_try
+        with:
+          repository: ${{ env.AGENT_REPO }}
+          ref: ${{ needs.version.outputs.agent_ref || '' }}
+          path: mynet_agent
+
+      - name: Checkout mynet_agent (fallback default branch)
+        if: steps.agent_try.outcome != 'success'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.AGENT_REPO }}
+          path: mynet_agent
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: mynet_agent/go.sum
+
+      - name: Build dist
+        working-directory: mynet_agent
+        run: |
+          set -euo pipefail
+          make dist VERSION="${{ needs.version.outputs.version }}"
+          echo "── dist ──"
+          ls -lah dist/
+          cat dist/checksums.txt
+
+      - name: Sanity-check binaries
+        run: |
+          set -euo pipefail
+          D=mynet_agent/dist
+          # 每个平台至少要有 mynet/mynetd（windows 带 .exe）
+          fail=0
+          for d in "$D"/mynet_agent_*/; do
+            [ -d "$d" ] || continue
+            case "$d" in
+              *windows*) want1=mynet.exe want2=mynetd.exe ;;
+              *)         want1=mynet    want2=mynetd    ;;
+            esac
+            if [ ! -f "$d$want1" ] || [ ! -f "$d$want2" ]; then
+              echo "✗ $d 缺 $want1 / $want2" >&2
+              fail=1
+            else
+              echo "✓ $(basename "$d")"
+            fi
+          done
+          test -s "$D/checksums.txt" || { echo "✗ checksums.txt 为空" >&2; fail=1; }
+          test "$fail" -eq 0
+
+      - name: Upload agent dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-dist
+          path: mynet_agent/dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  # ── Linux tgz：make dist 已产出，这里只校验 + 收集 ────────────
+  package-linux:
+    needs: [version, build-binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout mynet_desktop
+        uses: actions/checkout@v4
+        with:
+          path: mynet_desktop
+
+      - name: Download agent dist
+        uses: actions/download-artifact@v4
+        with:
+          name: agent-dist
+          path: mynet_agent/dist
+
+      - name: Verify tgz layout
+        working-directory: mynet_desktop
+        run: |
+          set -euo pipefail
+          make pack-linux AGENT_DIST=../mynet_agent/dist
+
+      - name: Upload linux packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkg-linux
+          path: |
+            mynet_agent/dist/mynet_agent_linux_*.tgz
+            mynet_agent/dist/checksums.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  # ── Windows NSIS：ubuntu 上 makensis 交叉编即可 ──────────────
+  package-windows:
+    needs: [version, build-binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout mynet_desktop
+        uses: actions/checkout@v4
+        with:
+          path: mynet_desktop
+
+      - name: Download agent dist
+        uses: actions/download-artifact@v4
+        with:
+          name: agent-dist
+          path: mynet_agent/dist
+
+      - name: Install makensis
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y nsis
+          makensis -VERSION
+
+      - name: Build NSIS installer
+        working-directory: mynet_desktop
+        run: |
+          set -euo pipefail
+          make pack-nsis AGENT_DIST=../mynet_agent/dist VERSION="${{ needs.version.outputs.version }}"
+          ls -lah dist/
+
+      - name: Upload windows packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkg-windows
+          path: mynet_desktop/dist/mynet_agent_windows_*.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  # ── macOS pkg + dmg：必须 macOS runner ───────────────────────
+  package-macos:
+    needs: [version, build-binaries]
+    runs-on: macos-14
+    steps:
+      - name: Checkout mynet_desktop
+        uses: actions/checkout@v4
+        with:
+          path: mynet_desktop
+
+      - name: Download agent dist
+        uses: actions/download-artifact@v4
+        with:
+          name: agent-dist
+          path: mynet_agent/dist
+
+      - name: Build pkg + dmg
+        working-directory: mynet_desktop
+        run: |
+          set -euo pipefail
+          # darwin 的 mynet_tray 必须在 macOS 上用 CGO 编（systray → AppKit）。
+          # build-binaries 在 ubuntu 上会跳过它，这里补。
+          if [ ! -x ../mynet_agent/dist/mynet_agent_darwin_*/mynet_tray ]; then
+            echo "▸ 补编 mynet_tray (darwin)"
+            for d in ../mynet_agent/dist/mynet_agent_darwin_*/; do
+              [ -d "$d" ] || continue
+              arch=$(basename "$d" | sed -n 's/^mynet_agent_darwin_\([^_]*\)_.*/\1/p')
+              case "$arch" in
+                arm64) goarch=arm64 ;;
+                amd64) goarch=amd64 ;;
+                *)     goarch=arm64 ;;
+              esac
+              ver=$(basename "$d" | sed -n 's/.*_\(v[^_]*\)$/\1/p')
+              ( cd ../mynet_agent && \
+                CGO_ENABLED=1 GOOS=darwin GOARCH=$goarch \
+                go build -ldflags "-s -w -X main.version=${ver:-dev}" \
+                  -o "../$d/mynet_tray" ./cmd/mynet_tray )
+            done
+          fi
+          make pack-pkg AGENT_DIST=../mynet_agent/dist VERSION="${{ needs.version.outputs.version }}"
+          make pack-dmg AGENT_DIST=../mynet_agent/dist VERSION="${{ needs.version.outputs.version }}"
+          ls -lah dist/
+
+      - name: Verify pkg payload
+        run: |
+          set -euo pipefail
+          for p in mynet_desktop/dist/*.pkg; do
+            echo "── $p ──"
+            pkgutil --payload-files "$p" | head -30
+            # 三个关键路径必须在
+            for need in '/opt/mynet/bin/mynetd' 'club.mynet.mynetd.plist' '/opt/mynet/bin/mynet'; do
+              pkgutil --payload-files "$p" | grep -F "$need" >/dev/null \
+                || { echo "✗ $p 缺 $need" >&2; exit 1; }
+            done
+          done
+
+      - name: Upload macos packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkg-macos
+          path: |
+            mynet_desktop/dist/mynet_agent_darwin_*.pkg
+            mynet_desktop/dist/mynet_agent_darwin_*.dmg
+          if-no-files-found: error
+          retention-days: 7
+
+  # ── 汇总 → GitHub Release（仅 tag）──────────────────────────
+  publish:
+    needs: [version, package-linux, package-windows, package-macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all packages
+        uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: List assets
+        run: |
+          set -euo pipefail
+          echo "── release assets ──"
+          find assets -type f | sort
+          # 至少要有 linux tgz + windows exe + macos dmg
+          ls assets/mynet_agent_linux_*.tgz   >/dev/null 2>&1 || { echo "缺 linux tgz" >&2; exit 1; }
+          ls assets/mynet_agent_windows_*.exe >/dev/null 2>&1 || { echo "缺 windows exe" >&2; exit 1; }
+          ls assets/mynet_agent_darwin_*.dmg  >/dev/null 2>&1 || { echo "缺 darwin dmg" >&2; exit 1; }
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.version }}
+          name: MyNet Agent ${{ needs.version.outputs.version }}
+          generate_release_notes: true
+          files: |
+            assets/*.tgz
+            assets/*.zip
+            assets/*.exe
+            assets/*.pkg
+            assets/*.dmg
+            assets/checksums.txt
+          body: |
+            ## 安装包
+
+            | 平台 | 文件 | 装法 |
+            |---|---|---|
+            | Linux | `mynet_agent_linux_*.tgz` | 解压后 `sudo ./mynet install --gateways wss://…` |
+            | macOS | `mynet_agent_darwin_*.dmg` | 打开 dmg → 双击 .pkg |
+            | Windows | `mynet_agent_windows_*.exe` | 双击安装向导 |
+
+            完整步骤见 [docs/INSTALL.md](https://github.com/mynet-club/mynet_desktop-V2/blob/main/docs/INSTALL.md)。
+
+            > 未代码签名：macOS Gatekeeper / Windows SmartScreen 首次打开会拦，需手动放行。

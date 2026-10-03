@@ -1,0 +1,44 @@
+name: CI
+
+# 门禁：make check（guard + lint + test）。
+# 安装器脚本与 systemd/launchd 都在检查范围内。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: mynet_desktop
+
+      - name: make check
+        working-directory: mynet_desktop
+        run: |
+          set -euo pipefail
+          # guard.sh 依赖 git；CI 里 git 可用
+          make check
+
+  # macos 上额外验 launchd plist（plutil）与 pkg 脚本语法
+  check-macos:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: mynet_desktop
+
+      - name: make check (macos)
+        working-directory: mynet_desktop
+        run: |
+          set -euo pipefail
+          make check

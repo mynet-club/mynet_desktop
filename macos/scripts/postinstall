@@ -1,0 +1,46 @@
+#!/bin/sh
+# postinstall — pkg 装完后跑：建状态目录 + 拉起 launchd
+#
+# 布局与 Linux 对齐：PREFIX=/opt/mynet，STATE=/var/lib/mynet。
+# 缺 mynetd 必须失败——静默装空壳是 V2-9 同源教训。
+#
+# 提权说明（用户会看到系统弹「安装器想要更改」）：
+#   本包装到 /opt/mynet、写 /Library/LaunchDaemons、建 TUN 需要 root，
+#   macOS 安装器已自动弹授权框。与 Windows NSIS 的 RequestExecutionLevel admin
+#   同一语义 —— 不是软件「要权限」，是隧道/路由/服务本身就属于系统层。
+set -eu
+
+LABEL=club.mynet.mynetd
+PLIST=/Library/LaunchDaemons/${LABEL}.plist
+BIN=/opt/mynet/bin/mynetd
+
+if [ ! -x "$BIN" ]; then
+  echo "postinstall: 缺 $BIN —— 产物没落全，拒绝拉起" >&2
+  exit 1
+fi
+
+install -d -m 0755 /var/log/mynet
+install -d -m 0700 /var/lib/mynet/conf /var/lib/mynet/var
+
+chown -R root:wheel /opt/mynet /var/lib/mynet /var/log/mynet 2>/dev/null || true
+
+if [ ! -f "$PLIST" ]; then
+  echo "postinstall: 缺 $PLIST" >&2
+  exit 1
+fi
+
+launchctl bootout "system/${LABEL}" 2>/dev/null || true
+if ! launchctl bootstrap system "$PLIST"; then
+  launchctl load -w "$PLIST" 2>/dev/null || {
+    echo "postinstall: launchctl 拉起 ${LABEL} 失败" >&2
+    exit 1
+  }
+fi
+
+# 托盘若在包装里，提示用户可从应用程序打开
+if [ -x /opt/mynet/bin/mynet_tray ]; then
+  echo "postinstall: 托盘在 /opt/mynet/bin/mynet_tray（可加入登录项）"
+fi
+
+echo "postinstall: ${LABEL} 已就绪（log: /var/log/mynet/mynetd.log）"
+exit 0

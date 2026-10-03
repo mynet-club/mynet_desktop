@@ -28,7 +28,8 @@ lint_shell() {
   echo "▸ lint · shell"
   # 按 shebang 选检查器：bash 脚本里的 process substitution 等 bashism
   # 用 sh -n 检查会**假失败**（mynet_gnb 已实测撞到），误报多了门禁就会被绕过。
-  for f in "$ROOT"/scripts/*.sh; do
+  # 覆盖 scripts/ + nsis/ + macos/（安装器脚本也是交付物，不是二等公民）。
+  for f in "$ROOT"/scripts/*.sh "$ROOT"/nsis/*.sh "$ROOT"/macos/*.sh "$ROOT"/macos/scripts/*; do
     [ -f "$f" ] || continue
     case "$(head -1 "$f")" in
       *bash*) _i=bash ;;
@@ -125,16 +126,27 @@ lint_launchd() {
 # ── test ─────────────────────────────────────────────────────
 # 行为测试：install-linux.sh 是否真的尊重 PREFIX/STATE（R3-5 的判据），
 # 以及**缺产物时是否失败**（此前它退出码 0、什么都不装、还打印 done）。
+#
+# ⚠️ 坏路径用例会临时搬走 dist/。此前它直接 rm -rf，把真实安装器
+#    产物一并抹掉（实测踩过：check 刚过，dist 就空了）。现在先 mv 走、
+#    测完必还原；还原失败要炸出来，不能装没发生。
 test_install() {
   echo "▸ test · install-linux.sh 行为"
   _t=$(mktemp -d)
   _dist="$ROOT/dist/mynet_agent_linux_amd64"
+  _backup="$ROOT/.dist-test-backup.$$"
   _had_dist=0
   [ -d "$ROOT/dist" ] && _had_dist=1
 
   cleanup() {
     rm -rf "$_t"
-    if [ "$_had_dist" -eq 0 ]; then rm -rf "$ROOT/dist"; fi
+    # 还原 dist：测前有就还回去，测前没有就别留垃圾
+    if [ -d "$_backup" ]; then
+      rm -rf "$ROOT/dist"
+      mv "$_backup" "$ROOT/dist" || echo "  ✗ dist 还原失败：$_backup" >&2
+    elif [ "$_had_dist" -eq 0 ]; then
+      rm -rf "$ROOT/dist"
+    fi
   }
   trap cleanup EXIT INT TERM
 
@@ -167,7 +179,11 @@ test_install() {
   chmod 700 "$_t/ro"
 
   # ── 坏路径：无产物 → 必须失败，且说清缺什么
-  rm -rf "$ROOT/dist"
+  # 先清掉假产物，再把真实 dist 搬走（不是 rm）：测完 cleanup 会还回来
+  rm -rf "$_dist"
+  if [ -d "$ROOT/dist" ]; then
+    mv "$ROOT/dist" "$_backup"
+  fi
   _out=$(PREFIX="$_t/p3" STATE="$_t/s3" sh "$ROOT/scripts/install-linux.sh" 2>&1)
   _rc=$?
   if [ "$_rc" -ne 0 ]; then ok "缺产物时失败（退出码 ${_rc}），不再静默装空布局"
@@ -176,21 +192,50 @@ test_install() {
     *找不到*) ok "缺产物时报错指明了缺哪个文件" ;;
     *)        bad "缺产物时未说明缺什么；输出：$(printf '%s' "$_out" | head -1)" ;;
   esac
-  if [ ! -d "$_t/p3/bin" ] || [ -z "$(ls -A "$_t/p3/bin" 2>/dev/null)" ]; then
-    ok "缺产物时没有留下半套布局"
-  else
+  if [ -f "$_t/p3/bin/mynet" ] || [ -f "$_t/p3/bin/mynetd" ]; then
     bad "缺产物时仍写入了 PREFIX/bin"
+  else
+    ok "缺产物时没有留下半套布局"
   fi
 
   cleanup
   trap - EXIT INT TERM
 }
 
+lint_installers() {
+  echo "▸ lint · 安装器骨架（E-7）"
+  for f in \
+    "$ROOT/nsis/mynet-agent.nsi" \
+    "$ROOT/nsis/service.ps1" \
+    "$ROOT/macos/build-pkg.sh" \
+    "$ROOT/macos/build-dmg.sh" \
+    "$ROOT/macos/scripts/preinstall" \
+    "$ROOT/macos/scripts/postinstall" \
+    "$ROOT/docs/INSTALL.md"
+  do
+    if [ -f "$f" ]; then ok "存在 $(basename "$f")"; else bad "缺 $f"; fi
+  done
+
+  # NSI 里不能再用 EnVar 插件（makensis 开箱没有，装了 NSIS 也可能编不过）
+  if grep -q 'EnVar::' "$ROOT/nsis/mynet-agent.nsi" 2>/dev/null; then
+    bad "nsi 引用了 EnVar 插件（应改用 nsExec + PowerShell）"
+  else
+    ok "nsi 无 EnVar 插件依赖"
+  fi
+
+  # postinstall 缺产物必须 exit 非 0（V2-9 同源）
+  if grep -q 'exit 1' "$ROOT/macos/scripts/postinstall" 2>/dev/null; then
+    ok "postinstall 缺产物会失败退出"
+  else
+    bad "postinstall 没有失败路径（缺产物会静默装空壳）"
+  fi
+}
+
 # ── 调度 ─────────────────────────────────────────────────────
 case "$MODE" in
-  lint) lint_shell; lint_systemd; lint_launchd ;;
+  lint) lint_shell; lint_systemd; lint_launchd; lint_installers ;;
   test) test_install ;;
-  all)  lint_shell; lint_systemd; lint_launchd; test_install ;;
+  all)  lint_shell; lint_systemd; lint_launchd; lint_installers; test_install ;;
   *)    echo "用法：sh scripts/check.sh [lint|test|all]"; exit 2 ;;
 esac
 

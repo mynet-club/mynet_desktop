@@ -1,12 +1,24 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- E-7：macOS launchd -->
+<!-- E-7：macOS launchd。路径与 Linux PREFIX=/opt/mynet 对齐（check.sh 会查）。 -->
 <plist version="1.0">
 <dict>
   <key>Label</key><string>club.mynet.mynetd</string>
   <key>ProgramArguments</key>
-  <array><string>/usr/local/opt/mynet/bin/mynetd</string></array>
+  <array>
+    <string>/opt/mynet/bin/mynetd</string>
+    <string>-listen</string>
+    <string>127.0.0.1:8096</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>MYNET_HOME</key><string>/var/lib/mynet</string>
+    <key>MYNET_BIN</key><string>/opt/mynet/bin/mynet</string>
+    <key>PATH</key><string>/opt/mynet/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin</string>
+  </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/var/log/mynet/mynetd.log</string>
+  <key>StandardErrorPath</key><string>/var/log/mynet/mynetd.err</string>
 </dict>
 </plist>

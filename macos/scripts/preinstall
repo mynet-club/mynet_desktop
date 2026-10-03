@@ -1,0 +1,14 @@
+#!/bin/sh
+# preinstall — pkg 安装前跑（升级/重装时先停旧服务）
+#
+# 不停的话：mynetd 正在被占用 → 装到一半失败；或 bootstrap 时报
+# "service already loaded"。失败**不阻断安装**（首次安装本来就没有服务）。
+set -u
+
+LABEL=club.mynet.mynetd
+
+# 已 load 则 bootout；没有则忽略
+launchctl bootout "system/${LABEL}" 2>/dev/null || true
+launchctl unload /Library/LaunchDaemons/${LABEL}.plist 2>/dev/null || true
+
+exit 0
