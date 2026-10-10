@@ -9,12 +9,15 @@
 # 布局：
 #   /Applications/MyNet.app          ← 启动台图标（托盘 Agent）
 #   /opt/mynet/bin/{mynet,mynetd,mynet_gateway,mynet_tray,webui.html}
-#   /Library/LaunchDaemons/club.mynet.mynetd.plist
 #   /opt/mynet/share/INSTALL.txt
 #
+# ⚠️ 本 pkg **不装 launchd plist**：服务装配全部委托 `mynet install`
+#    （由它写 com.mynet.mynetd.plist 并 bootstrap）。pkg 只落文件 —— 薄壳原则，
+#    即合同 §1「系统登记只有一个 owner：mynet install」。
+#
 # 安装过程（pkg 的 scripts/）：
-#   preinstall  — 升级时先 bootout 旧服务，避免「文件占用 / 双实例」
-#   postinstall — 建 /var/lib/mynet，bootstrap launchd
+#   preinstall  — 停旧服务（legacy club.mynet.mynetd + com.mynet.mynetd），避免文件占用/双实例
+#   postinstall — 建 /var/lib/mynet，调 `mynet install` 装配服务并引导打开 WebUI
 set -eu
 
 if [ $# -lt 1 ]; then
@@ -49,8 +52,7 @@ trap 'rm -rf "$STAGE"' EXIT INT TERM
 PAYLOAD="$STAGE/payload"
 mkdir -p \
   "$PAYLOAD/opt/mynet/bin" \
-  "$PAYLOAD/opt/mynet/share" \
-  "$PAYLOAD/Library/LaunchDaemons"
+  "$PAYLOAD/opt/mynet/share"
 
 install -m 0755 "$AGENT_DIST/mynet"         "$PAYLOAD/opt/mynet/bin/"
 install -m 0755 "$AGENT_DIST/mynetd"        "$PAYLOAD/opt/mynet/bin/"
@@ -111,42 +113,6 @@ cat > "$APP/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# launchd plist：ProgramArguments 必须是绝对路径（check.sh 会查）
-# Label 与文件名一致：club.mynet.mynetd
-cat > "$PAYLOAD/Library/LaunchDaemons/club.mynet.mynetd.plist" <<'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>club.mynet.mynetd</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/opt/mynet/bin/mynetd</string>
-    <string>-listen</string>
-    <string>127.0.0.1:8096</string>
-  </array>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>MYNET_HOME</key>
-    <string>/var/lib/mynet</string>
-    <key>MYNET_BIN</key>
-    <string>/opt/mynet/bin/mynet</string>
-    <key>PATH</key>
-    <string>/opt/mynet/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin</string>
-  </dict>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <true/>
-  <key>StandardOutPath</key>
-  <string>/var/log/mynet/mynetd.log</string>
-  <key>StandardErrorPath</key>
-  <string>/var/log/mynet/mynetd.err</string>
-</dict>
-</plist>
-PLIST
-
 cat > "$PAYLOAD/opt/mynet/share/INSTALL.txt" <<EOF
 MyNet Agent ${VERSION} (darwin/${arch})
 
@@ -157,11 +123,13 @@ MyNet Agent ${VERSION} (darwin/${arch})
   /opt/mynet/bin/mynet          执行器
   /opt/mynet/bin/mynetd         常驻通信层
   /opt/mynet/bin/mynet_gateway  边缘网关
-  /Library/LaunchDaemons/club.mynet.mynetd.plist
+
+服务登记位置（由 mynet install 写入，非 pkg）：
+  /Library/LaunchDaemons/com.mynet.mynetd.plist
 
 服务管理：
-  sudo launchctl kickstart -k system/club.mynet.mynetd
-  sudo launchctl bootout    system/club.mynet.mynetd
+  sudo launchctl kickstart -k system/com.mynet.mynetd
+  sudo launchctl bootout    system/com.mynet.mynetd
   tail -f /var/log/mynet/mynetd.log
 
 下一步（节点身份）：

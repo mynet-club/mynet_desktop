@@ -43,6 +43,24 @@ for b in mynet.exe mynetd.exe; do
   fi
 done
 
+# 驱动依赖（随包分发）：wintun.dll 在仓内 nsis/vendor/（provenance/SHA 见
+# nsis/wintun-provenance.md）。换文件必须同步该文档与本行的固定 SHA。
+WINTUN_SHA256=e5da8447dc2c320edc0fc52fa01885c103de8c118481f683643cacc3220dafce
+WINTUN_DLL="$SCRIPT_DIR/vendor/wintun/wintun.dll"
+if [ ! -f "$WINTUN_DLL" ]; then
+  echo "✗ 缺 $WINTUN_DLL（安装器随包分发的驱动依赖）" >&2
+  exit 1
+fi
+if command -v sha256sum >/dev/null 2>&1; then
+  got=$(sha256sum "$WINTUN_DLL" | awk '{print $1}')
+else
+  got=$(shasum -a 256 "$WINTUN_DLL" | awk '{print $1}')
+fi
+if [ "$got" != "$WINTUN_SHA256" ]; then
+  echo "✗ wintun.dll SHA256 不匹配：期望 $WINTUN_SHA256，得到 $got" >&2
+  exit 1
+fi
+
 base=$(basename "$SRC")
 arch=$(printf '%s' "$base" | sed -n 's/^mynet_agent_windows_\([^_]*\)_.*/\1/p')
 [ -n "$arch" ] || arch=amd64
@@ -61,6 +79,7 @@ mkdir -p "$OUT_DIR"
 OUTFILE="$OUT_DIR/mynet_agent_windows_${arch}_${VERSION}.exe"
 
 makensis \
+  -DWINTUN_DLL="$WINTUN_DLL" \
   -DVERSION="$VERSION" \
   -DARCH="$arch" \
   -DSRCDIR="$SRC" \

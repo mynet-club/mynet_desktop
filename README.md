@@ -40,9 +40,7 @@ make pack-nsis    # Windows .exe
 ## 目录
 
 ```
-systemd/          Linux 单元（mynetd.service）
-launchd/          macOS LaunchDaemon（club.mynet.mynetd.plist）
-nsis/             Windows 安装向导（mynet-agent.nsi + service.ps1）
+nsis/             Windows 安装向导（mynet-agent.nsi；服务登记委托 mynet install）
 macos/            pkg/dmg 构建脚本 + postinstall
 scripts/          install-linux.sh · check.sh
 docs/INSTALL.md   安装指南（三平台）

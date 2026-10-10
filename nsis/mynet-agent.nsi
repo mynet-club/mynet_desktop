@@ -7,20 +7,24 @@
 ; 安装过程：
 ;   1. 选目录（默认 C:\Program Files\MyNet）
 ;   2. 落盘 mynet / mynetd / mynet_gateway / webui.html
-;   3. 写 MYNET_HOME / MYNET_GATEWAYS 机器环境变量
-;   4. 用「计划任务」注册开机自启 —— mynetd 目前**不是** Windows 服务
-;      （无 SCM 句柄，sc create 会 1053），计划任务是能用的常驻形态。
-;   5. 加 PATH、写卸载项
+;   3. **服务装配委托 `mynet install`**（SEC_START）：它写 $ProgramData\MyNet\mynetd.env、
+;      `sc create mynetd` + start、注册托盘自启、并拉起 WebUI —— 安装器只落文件。
+;   4. 加 PATH、写卸载项
 ;
-; ⚠️ 计划任务 ≠ SCM 服务：sc stop / services.msc 管不了它，
-;    停止请用 scripts\service.ps1 stop 或卸载器。等 mynetd 接了
-;    golang.org/x/sys/windows/svc 之后再换成真服务。
+; ⚠️ 本向导**不自建登记**：旧版用 `schtasks` 计划任务（当时 mynetd 无 SCM 句柄），
+;    现 mynetd 已接 golang.org/x/sys/windows/svc，登记统一归 `mynet install`，
+;    即合同「系统登记只有一个 owner」。旧计划任务在 `mynet install` 里会被清掉。
 
 !ifndef VERSION
   !define VERSION "v0.0.0-dev"
 !endif
 !ifndef ARCH
   !define ARCH "amd64"
+!endif
+; 驱动依赖二进制（随包分发）：仓内 nsis/vendor/wintun/wintun.dll（provenance/SHA 见
+; nsis/wintun-provenance.md）。build-nsis.sh 会校验 SHA 并 -D 传入。
+!ifndef WINTUN_DLL
+  !define WINTUN_DLL "${__FILEDIR__}\vendor\wintun\wintun.dll"
 !endif
 !ifndef SRCDIR
   !error "SRCDIR 未定义：请传入包含 mynet.exe/mynetd.exe 的目录"
@@ -32,7 +36,8 @@
 !define PRODUCT_NAME    "MyNet Agent"
 !define PRODUCT_PUBLISHER "MyNet Club"
 !define PRODUCT_DIR     "MyNet"
-!define SERVICE_TASK    "MyNetd"
+; SCM 服务名（由 `mynet install` 注册/管理；sc query mynetd 可见）
+!define SVC_NAME        "mynetd"
 !define UNINST_KEY      "Software\Microsoft\Windows\CurrentVersion\Uninstall\MyNetAgent"
 
 ; 本机 API/WebUI 地址，SSOT = mynet_agent/mynet/port_owner.go 的 DefaultLocalAPI。
@@ -69,7 +74,7 @@ Section "核心组件（必选）" SEC_CORE
 
   MessageBox MB_ICONINFORMATION \
     "MyNet 需要管理员权限，原因：$\r$\n$\r$\n\
-1. 服务注册到系统（计划任务，SYSTEM 账户）$\r$\n\
+1. 注册系统服务 mynetd（SCM，SYSTEM 账户）$\r$\n\
 2. 创建/管理 TUN 虚拟网卡$\r$\n\
 3. 写入系统路由表与防火墙规则$\r$\n\
 4. 安装到 Program Files$\r$\n$\r$\n\
@@ -82,33 +87,21 @@ Section "核心组件（必选）" SEC_CORE
   File /nonfatal "${SRCDIR}\mynet_tray.exe"
   File /nonfatal "${SRCDIR}\webui.html"
 
+  ; 驱动依赖（A 层文件交付）：wintun.dll 必须与 gnb.exe **同目录** —— gnb 用
+  ; LoadLibraryExW(..., LOAD_LIBRARY_SEARCH_APPLICATION_DIR)。实测 gnb.exe 在
+  ; $INSTDIR\driver\gnb\bin，故 DLL 落同处。
+  ; 无 /nonfatal：缺 DLL 时 makensis **编译即失败** —— 不产出装上去必崩的包。
+  ; 来源/SHA 见 nsis/wintun-provenance.md；取件用 scripts/fetch-wintun.sh。
+  SetOutPath "$INSTDIR\driver\gnb\bin"
+  File "${WINTUN_DLL}"
+
   ; MYNET_HOME 默认放 ProgramData（可写，服务/用户都能落状态）
   CreateDirectory "$APPDATA\MyNet\conf"
   CreateDirectory "$APPDATA\MyNet\var"
   CreateDirectory "$INSTDIR\etc"
 
-  ; 启动包装：先设环境再拉起 mynetd。计划任务跑的是这个，
-  ; 免得去改机器级环境变量后还要重登录才生效。
-  FileOpen $0 "$INSTDIR\bin\mynetd-start.cmd" w
-  FileWrite $0 "@echo off$\r$\n"
-  FileWrite $0 "set MYNET_HOME=$APPDATA\MyNet$\r$\n"
-  FileWrite $0 "set MYNET_BIN=$INSTDIR\bin\mynet.exe$\r$\n"
-  FileWrite $0 "set PATH=$INSTDIR\bin;%PATH%$\r$\n"
-  ; MYNET_GATEWAYS 由安装向导的「网关」组件写入；未选时留空（console 模式）
-  IfFileExists "$INSTDIR\etc\gateways.txt" 0 gw_done
-    FileOpen $1 "$INSTDIR\etc\gateways.txt" r
-    FileRead $1 $2
-    FileClose $1
-    FileWrite $0 "set MYNET_GATEWAYS=$2$\r$\n"
-  gw_done:
-  FileWrite $0 '"$INSTDIR\bin\mynetd.exe" -listen ${LOCAL_API}$\r$\n'
-  FileClose $0
-
-  ; 计划任务：开机自启 + 崩溃拉起（/RI 间隔 restart）
-  ; /RU SYSTEM：节点模式要建 tun / 写路由，普通用户起不来
-  nsExec::ExecToLog 'schtasks /create /tn "${SERVICE_TASK}" /tr "$INSTDIR\bin\mynetd-start.cmd" /sc onstart /ru SYSTEM /rl HIGHEST /f'
-  Pop $0
-
+  ; 启动包装与服务登记**都不在本节**：SCM 服务由 `mynet install` 注册（见 SEC_START）。
+  ; 旧版曾写 mynetd-start.cmd + `schtasks` 计划任务（自建登记），已撤。
   ; 卸载注册表
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   WriteRegStr HKLM "${UNINST_KEY}" "DisplayName"     "${PRODUCT_NAME}"
@@ -142,24 +135,37 @@ Section /o "配置网关地址" SEC_GW
     FileOpen $0 "$INSTDIR\etc\gateways.txt" w
     FileWrite $0 "wss://gw.mynet.club"
     FileClose $0
-    MessageBox MB_ICONINFORMATION "默认网关已写入 wss://gw.mynet.club。$\r$\n如需修改请编辑 $\r$\n$INSTDIR\etc\gateways.txt$\r$\n然后以管理员重启计划任务 ${SERVICE_TASK}$\r$\n（service.ps1 不随安装包落盘，见 docs/INSTALL.md）"
+    MessageBox MB_ICONINFORMATION "默认网关已写入 wss://gw.mynet.club。$\r$\n如需修改请编辑 $\r$\n$INSTDIR\etc\gateways.txt$\r$\n然后以管理员执行：mynet install --gateways <新网关>$\r$\n（service.ps1 已废弃；服务启停用 `mynet service start|stop|status`）"
   !endif
 SectionEnd
 
 Section "立即启动" SEC_START
-  nsExec::ExecToLog 'schtasks /run /tn "${SERVICE_TASK}"'
+  ; 服务装配**全部委托 `mynet install`**：写 env、sc create mynetd + start、
+  ; 托盘登录自启、拉起 WebUI。安装器只落文件 —— 合同「系统登记只有一个 owner」的落点。
+  SetShellVarContext all
+  StrCpy $1 "wss://gw.mynet.club/v1/node/connect"
+  !ifdef GATEWAYS
+    StrCpy $1 "${GATEWAYS}"
+  !else
+    IfFileExists "$INSTDIR\etc\gateways.txt" 0 gw_default
+      FileOpen $2 "$INSTDIR\etc\gateways.txt" r
+      FileRead $2 $1
+      FileClose $2
+    gw_default:
+  !endif
+  nsExec::ExecToLog '"$INSTDIR\bin\mynet.exe" install --gateways "$1" --prefix "$INSTDIR" --home "$APPDATA\MyNet"'
   Pop $0
 SectionEnd
 
 ; ── 卸载 ──────────────────────────────────────────────────────
 Section "Uninstall"
   SetShellVarContext all
-  ; 先停任务再删文件，否则 mynetd 占用导致删不掉。
-  ; schtasks /end 是首选（init 系统，精确）；下面那条 PowerShell 只兜「任务已停但
-  ; 进程还占着文件」的残余，且**按可执行路径过滤**——不用 taskkill /im（红线：禁止
-  ; 按名字杀进程，同名 mynetd 可能来自别的安装实例或开发机手跑）。
-  nsExec::ExecToLog 'schtasks /end /tn "${SERVICE_TASK}"'
-  nsExec::ExecToLog 'schtasks /delete /tn "${SERVICE_TASK}" /f'
+  ; 停服务/清登记委托 `mynet uninstall`（sc stop/delete mynetd + 删托盘自启键 + 删 env）；
+  ; --keep-bin：二进制在 $INSTDIR\bin 由本卸载器删，不劳 CLI 去 $home\bin 找。
+  ; 下面那条 PowerShell 只兜「服务已停但进程还占着文件」的残余，且**按可执行路径过滤**
+  ; —— 不用 taskkill /im（红线：禁止按名字杀进程，同名 mynetd 可能来自别的实例）。
+  nsExec::ExecToLog '"$INSTDIR\bin\mynet.exe" uninstall --home "$APPDATA\MyNet" --keep-bin'
+  Pop $0
   nsExec::ExecToLog 'powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $$.ExecutablePath -like $\'$INSTDIR\bin\*$\' } | ForEach-Object { Stop-Process -Id $$.ProcessId -Force }"'
 
   Delete "$INSTDIR\bin\mynet.exe"
@@ -167,7 +173,8 @@ Section "Uninstall"
   Delete "$INSTDIR\bin\mynet_gateway.exe"
   Delete "$INSTDIR\bin\mynet_tray.exe"
   Delete "$INSTDIR\bin\webui.html"
-  Delete "$INSTDIR\bin\mynetd-start.cmd"
+  Delete "$INSTDIR\driver\gnb\bin\wintun.dll"
+  RMDir  "$INSTDIR\driver\gnb\bin"
   Delete "$INSTDIR\Uninstall.exe"
   RMDir  "$INSTDIR\bin"
   RMDir  "$INSTDIR\etc"

@@ -63,7 +63,7 @@ mynet config import mynet-config-….tar.gz               # 导入；自动打 p
 | 平台 | 安装包 | 怎么装 | 常驻形态 |
 |---|---|---|---|
 | **Linux** | `.tgz` | 解压 + `sudo ./mynet install` | systemd（`mynetd.service` + `mynet_gnb.service`） |
-| **macOS** | `.dmg`（内含 `.pkg`） | 双击 pkg 向导 | launchd（`club.mynet.mynetd`） |
+| **macOS** | `.dmg`（内含 `.pkg`） | 双击 pkg 向导 | launchd（`com.mynet.mynetd`） |
 | **Windows** | `.exe`（NSIS） | 双击安装向导 | 计划任务 `MyNetd`（onstart + SYSTEM） |
 
 ---
@@ -162,7 +162,7 @@ sh mynet_desktop/macos/build-dmg.sh \
 
 ```
 /opt/mynet/bin/{mynet,mynetd,mynet_gateway,webui.html}
-/Library/LaunchDaemons/club.mynet.mynetd.plist
+/Library/LaunchDaemons/com.mynet.mynetd.plist
 /var/lib/mynet/          节点状态（卸载默认保留）
 /var/log/mynet/mynetd.{log,err}
 ```
@@ -170,8 +170,8 @@ sh mynet_desktop/macos/build-dmg.sh \
 ### 卸载
 
 ```bash
-sudo launchctl bootout system/club.mynet.mynetd
-sudo rm -f /Library/LaunchDaemons/club.mynet.mynetd.plist
+sudo launchctl bootout system/com.mynet.mynetd
+sudo rm -f /Library/LaunchDaemons/com.mynet.mynetd.plist
 sudo rm -rf /opt/mynet
 # 确认不要节点身份了再：sudo rm -rf /var/lib/mynet
 ```
@@ -179,7 +179,7 @@ sudo rm -rf /opt/mynet
 ### 验证
 
 ```bash
-sudo launchctl print system/club.mynet.mynetd | head
+sudo launchctl print system/com.mynet.mynetd | head
 tail -f /var/log/mynet/mynetd.log
 ```
 
@@ -218,20 +218,17 @@ C:\ProgramData\MyNet\{conf,var}               # MYNET_HOME（节点身份）
 
 ### ⚠️ 计划任务 ≠ SCM 服务
 
-mynetd **目前没有接** `golang.org/x/sys/windows/svc`，`sc create` 注册了也会
-`net start` 报 1053。所以 Windows 侧用 **计划任务（onstart + SYSTEM）** 做开机自启：
+Windows 侧是 **SCM 服务 `mynetd`**（mynetd 已接 `golang.org/x/sys/windows/svc`），
+登记由 `mynet install` 完成；启停统一走 CLI：
 
-| 想做什么 | 命令 |
+| 想做什么 | 命令（管理员） |
 |---|---|
-| 看状态 | `schtasks /query /tn MyNetd /fo LIST` |
-| 启动 | 管理员 PowerShell：`.\service.ps1 start` |
-| 停止 | `.\service.ps1 stop` |
-| 重启 | `.\service.ps1 restart` |
-| 卸载任务 | `.\service.ps1 uninstall -KeepData` |
+| 看状态 | `mynet service status`（或 `sc query mynetd`） |
+| 启动 / 停止 / 重启 | `mynet service start \| stop \| restart` |
+| 重新装配（改 env 后） | `mynet install --gateways <wss://…>` |
 
-`service.ps1` 在 `mynet_desktop/nsis/`，装完也可以从源码仓拿。
-
-等 mynetd 接上 Windows 服务接口后，再换成 `sc create` 真服务（见文末）。
+**已废弃**：旧版的 `service.ps1`（自建 `schtasks` 计划任务）已删除 —— 服务登记只归
+`mynet install`。
 
 ### 卸载
 
@@ -255,8 +252,8 @@ sudo mynet setup --vpn-type gnb --back-pub <back 公钥 hex>
 
 # 3) 重启常驻进程，触发：拉 bundle → 渲染驱动配置 → 装路由
 sudo systemctl restart mynetd          # Linux
-sudo launchctl kickstart -k system/club.mynet.mynetd   # macOS
-# Windows：service.ps1 restart
+sudo launchctl kickstart -k system/com.mynet.mynetd   # macOS
+# Windows：mynet service restart
 ```
 
 ---

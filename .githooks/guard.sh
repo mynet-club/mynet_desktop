@@ -168,7 +168,7 @@ fi
 
 # A4 归档内容扫描 —— A2/A3 都看不见压缩包**里面**
 # 2026-10-04 真实事故：mynet_gnb 的 packages/*/itest/backup-*/ 把生产节点
-# (10.182.236.180) 与公司整网网关 (192.168.0.2) 的 *.private、credential.json
+# (10.182.236.180) 与旁路网关 (192.168.0.2) 的 *.private、credential.json
 # 打进 .tgz 提交并推到 GitHub。三层全瞎：
 #   A2 只匹配 PEM 文本 `BEGIN … PRIVATE KEY`，而 GNB 的 .private 是裸 32 字节
 #      ed25519 二进制（AGENTS.md §1.1：clamp(SHA512(seed))），**没有 PEM 头**；
@@ -381,6 +381,12 @@ fi
 #    确需入库的非产物二进制走 C4_ALLOW，且必须在提交说明里写明理由。
 #      C4_ALLOW 可用环境变量覆盖（自测与临时放行用），默认空 —— 实测 api/ctl/gui/agent 四仓零命中。
 C4_ALLOW="${C4_ALLOW:-}" # 空格分隔的路径前缀白名单
+# 仓内**持久**白名单：`.guard-c4-allow`（每行一个路径前缀，# 注释）。
+# 用途：确需入库的**依赖二进制**（如安装器随包分发的 wintun.dll）—— 环境变量只在
+# 当次提交有效，提交后失效；入库件必须走这份文件并同步其 provenance。
+if [ -n "${ROOT:-}" ] && [ -f "$ROOT/.guard-c4-allow" ]; then
+  C4_ALLOW="$C4_ALLOW $(grep -v "^[[:space:]]*#" "$ROOT/.guard-c4-allow" 2>/dev/null | tr "\n" " " || true)"
+fi
 c4=0
 for f in $FILES; do
   c4_allow_hit=0

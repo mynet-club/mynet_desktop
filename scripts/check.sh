@@ -54,73 +54,98 @@ lint_shell() {
   fi
 }
 
-lint_systemd() {
-  echo "▸ lint · systemd unit"
-  _u="$ROOT/systemd/mynetd.service"
-  if [ ! -f "$_u" ]; then bad "缺 systemd/mynetd.service"; return; fi
-
-  for sec in '[Unit]' '[Service]' '[Install]'; do
-    if grep -qF "$sec" "$_u"; then ok "unit 有 ${sec} 段"; else bad "unit 缺 ${sec} 段"; fi
-  done
-  for key in ExecStart Restart WantedBy; do
-    if grep -q "^${key}=" "$_u"; then ok "unit 有 ${key}="; else bad "unit 缺 ${key}="; fi
-  done
-
-  # D-8：mynetd 非 root 运行。User= 缺失即回到 root，属回归。
-  _user=$(grep '^User=' "$_u" | head -1 | cut -d= -f2)
-  if [ -z "$_user" ]; then
-    bad "unit 无 User=（将以 root 运行，违反 D-8）"
-  elif [ "$_user" = root ]; then
-    bad "unit 的 User=root（违反 D-8：mynetd 非 root）"
+# Linux 安装契约：薄壳 —— unit/服务登记只归 `mynet install`（合同 §1）。
+lint_linux() {
+  echo "▸ lint · Linux 安装器（薄壳委托）"
+  if [ -f "$ROOT/systemd/mynetd.service" ]; then
+    bad "systemd/mynetd.service 应已删除（unit 由 mynet install 内嵌写出）"
   else
-    ok "unit 以非 root 用户运行（User=${_user}）"
+    ok "不自带 systemd unit"
   fi
-
-  # 跨文件一致性：unit 的 ExecStart 必须指向 install-linux.sh 的默认 PREFIX。
-  # 两边任一处改了路径，服务就会起不来，而这种断裂**没有任何运行期报错**。
-  # shellcheck disable=SC2016  # sed 程序里的 ${PREFIX:-...} 是要匹配的字面量，故意不展开
-  _prefix=$(sed -n 's/^PREFIX="${PREFIX:-\([^}]*\)}".*/\1/p' "$ROOT/scripts/install-linux.sh" | head -1)
-  _exec=$(grep '^ExecStart=' "$_u" | head -1 | cut -d= -f2)
-  if [ -z "$_prefix" ]; then
-    skipped "无法从 install-linux.sh 解析默认 PREFIX —— 路径一致性本次未检查"
-  elif [ "$_exec" = "${_prefix}/bin/mynetd" ]; then
-    ok "unit 的 ExecStart 与 install-linux.sh 的 PREFIX 一致（${_exec}）"
+  _sh="$ROOT/scripts/install-linux.sh"
+  if grep -q 'mynet\" install\|bin/mynet\" install' "$_sh" 2>/dev/null; then
+    ok "install-linux.sh 委托 mynet install 装配服务"
   else
-    bad "路径漂移：unit ExecStart=${_exec}，但 install-linux.sh 装到 ${_prefix}/bin/mynetd"
+    bad "install-linux.sh 未委托 mynet install（自拷 unit = 违反单一 owner）"
+  fi
+  if grep -q 'systemd/mynetd.service' "$_sh" 2>/dev/null; then
+    bad "install-linux.sh 仍在自拷 unit"
+  else
+    ok "install-linux.sh 不自拷 unit"
   fi
 }
 
-lint_launchd() {
-  echo "▸ lint · launchd plist"
-  _p="$ROOT/launchd/club.mynet.mynetd.plist"
-  if [ ! -f "$_p" ]; then bad "缺 launchd/club.mynet.mynetd.plist"; return; fi
+lint_macos() {
+  echo "▸ lint · macOS 安装器（薄壳委托）"
+  _post="$ROOT/macos/scripts/postinstall"
+  _pre="$ROOT/macos/scripts/preinstall"
+  _pkg="$ROOT/macos/build-pkg.sh"
 
-  if command -v plutil >/dev/null 2>&1; then
-    if plutil -lint "$_p" >/dev/null 2>&1; then ok "plist 可解析（plutil -lint）"; else bad "plist 解析失败"; return; fi
-    _label=$(plutil -extract Label raw -o - "$_p" 2>/dev/null)
-    _prog=$(plutil -extract ProgramArguments.0 raw -o - "$_p" 2>/dev/null)
-  elif command -v python3 >/dev/null 2>&1; then
-    _label=$(python3 -c "import plistlib,sys;print(plistlib.load(open(sys.argv[1],'rb')).get('Label',''))" "$_p" 2>/dev/null)
-    _prog=$(python3 -c "import plistlib,sys;a=plistlib.load(open(sys.argv[1],'rb')).get('ProgramArguments') or [];print(a[0] if a else '')" "$_p" 2>/dev/null)
-    [ -n "$_label" ] && ok "plist 可解析（python3 plistlib）"
+  # 服务登记唯一 owner 是 mynet install：pkg 不自带 plist（根 launchd/ 已退役）
+  if ls "$ROOT"/launchd/*.plist >/dev/null 2>&1; then
+    bad "根 launchd/ 仍有 plist —— 登记归 mynet install，pkg 不得自带"
   else
-    skipped "plutil 与 python3 都不可用 —— plist 本次未检查"
-    return
+    ok "pkg 不自带 launchd plist"
   fi
 
-  # launchd 约定：Label 应与文件名一致，否则 load 后无法按名管理
-  if [ "$_label" = club.mynet.mynetd ]; then
-    ok "plist 的 Label 与文件名一致（${_label}）"
+  if grep -q 'mynet" install\|mynet install' "$_post" 2>/dev/null; then
+    ok "postinstall 委托 mynet install 装配服务"
   else
-    bad "plist 的 Label='${_label}'，应为 club.mynet.mynetd（与文件名一致）"
+    bad "postinstall 未调用 mynet install（自建登记 = 违反单一 owner）"
   fi
-  case "$_prog" in
-    /*mynetd) ok "plist 的 ProgramArguments 是绝对路径且指向 mynetd（${_prog}）" ;;
-    *)        bad "plist 的 ProgramArguments 异常：'${_prog}'（应为绝对路径且以 mynetd 结尾）" ;;
-  esac
-  for key in RunAtLoad KeepAlive; do
-    if grep -q "<key>${key}</key>" "$_p"; then ok "plist 有 ${key}"; else bad "plist 缺 ${key}（常驻进程需要它）"; fi
-  done
+
+  if grep -q 'com.mynet.mynetd' "$_pre" 2>/dev/null && grep -q 'club.mynet.mynetd' "$_pre" 2>/dev/null; then
+    ok "preinstall 同时停 legacy + 新 label"
+  else
+    bad "preinstall 未同时停 club.mynet.mynetd 与 com.mynet.mynetd"
+  fi
+
+  if grep -q 'PAYLOAD/Library/LaunchDaemons' "$_pkg" 2>/dev/null; then
+    bad "build-pkg.sh 仍在 payload 里放 plist（应由 mynet install 写）"
+  else
+    ok "build-pkg.sh 不落 plist"
+  fi
+}
+
+# Windows 安装器契约：薄壳 —— **服务登记只归 `mynet install`**（合同 §1）。
+lint_nsis() {
+  echo "▸ lint · Windows 安装器（薄壳委托）"
+  _nsi="$ROOT/nsis/mynet-agent.nsi"
+  if [ -f "$ROOT/nsis/service.ps1" ]; then
+    bad "nsis/service.ps1 应已删除（登记归 mynet install，不设并行实现）"
+  else
+    ok "无 service.ps1 并行实现"
+  fi
+  if grep -q 'schtasks /create\|schtasks /delete' "$_nsi" 2>/dev/null; then
+    bad "nsi 仍自建计划任务（登记应委托 mynet install）"
+  else
+    ok "nsi 不自建计划任务"
+  fi
+  if grep -q '" install --gateways' "$_nsi" 2>/dev/null; then
+    ok "nsi 委托 mynet install 装配服务"
+  else
+    bad "nsi 未调用 mynet install（自建登记 = 违反单一 owner）"
+  fi
+  if [ -f "$ROOT/nsis/vendor/wintun/wintun.dll" ]; then
+    ok "随包 DLL 在仓（nsis/vendor/wintun）"
+  else
+    bad "缺 nsis/vendor/wintun/wintun.dll（安装器要随包分发它）"
+  fi
+  if [ -f "$ROOT/.guard-c4-allow" ]; then
+    ok "有 .guard-c4-allow（DLL 入库白名单，过 guard C4）"
+  else
+    bad "缺 .guard-c4-allow —— DLL 会被 guard C4 拦下"
+  fi
+  if grep -q 'wintun.dll' "$_nsi" 2>/dev/null && grep -q 'driver\\gnb\\bin' "$_nsi" 2>/dev/null; then
+    ok "nsi 内置 wintun.dll 到 gnb.exe 同目录"
+  else
+    bad "nsi 未把 wintun.dll 落到 gnb.exe 同目录（缺 DLL 会崩）"
+  fi
+  if grep -q '" uninstall --home' "$_nsi" 2>/dev/null; then
+    ok "nsi 卸载委托 mynet uninstall"
+  else
+    bad "nsi 卸载未委托 mynet uninstall（会留登记残留）"
+  fi
 }
 
 # ── test ─────────────────────────────────────────────────────
@@ -206,7 +231,6 @@ lint_installers() {
   echo "▸ lint · 安装器骨架（E-7）"
   for f in \
     "$ROOT/nsis/mynet-agent.nsi" \
-    "$ROOT/nsis/service.ps1" \
     "$ROOT/macos/build-pkg.sh" \
     "$ROOT/macos/build-dmg.sh" \
     "$ROOT/macos/scripts/preinstall" \
@@ -233,9 +257,9 @@ lint_installers() {
 
 # ── 调度 ─────────────────────────────────────────────────────
 case "$MODE" in
-  lint) lint_shell; lint_systemd; lint_launchd; lint_installers ;;
+  lint) lint_shell; lint_linux; lint_macos; lint_nsis; lint_installers ;;
   test) test_install ;;
-  all)  lint_shell; lint_systemd; lint_launchd; lint_installers; test_install ;;
+  all)  lint_shell; lint_linux; lint_macos; lint_nsis; lint_installers; test_install ;;
   *)    echo "用法：sh scripts/check.sh [lint|test|all]"; exit 2 ;;
 esac
 

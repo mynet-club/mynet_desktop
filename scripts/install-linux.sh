@@ -36,10 +36,14 @@ for b in mynet mynetd; do
   echo "installed ${PREFIX}/bin/${b}"
 done
 
-if [ -w /etc/systemd/system ] && [ -f "$SCRIPT_DIR/systemd/mynetd.service" ]; then
-  install -m 0644 "$SCRIPT_DIR/systemd/mynetd.service" /etc/systemd/system/
-  echo "installed systemd unit"
+# 服务装配**委托 `mynet install`**：它写内嵌 unit + /etc/mynet/mynetd.env 并 enable/start。
+# 安装器只落文件 —— 合同「系统登记只有一个 owner」（旧版本脚本自己拷 unit，已撤）。
+if [ -w /etc/systemd/system ] && [ "$PREFIX" = "/opt/mynet" ]; then
+  GW="${MYNET_GATEWAYS:-wss://gw.mynet.club/v1/node/connect}"
+  echo "▸ 委托 mynet install 装配服务（gateways=${GW}）"
+  MYNET_HOME="$STATE" "${PREFIX}/bin/mynet" install --gateways "$GW" --prefix "$PREFIX" --home "$STATE"
 else
-  echo "unit file: ${SCRIPT_DIR}/systemd/mynetd.service (not copied; need root / systemd)"
+  echo "服务装配：请以 root 执行 ${PREFIX}/bin/mynet install --gateways <wss://…> --prefix ${PREFIX} --home ${STATE}"
+  echo "  （非 root 或非标准前缀时，本脚本只落文件，不登记服务）"
 fi
 echo "done: prefix=${PREFIX} state=${STATE_NOTE}"
