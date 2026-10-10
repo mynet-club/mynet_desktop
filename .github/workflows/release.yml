@@ -6,7 +6,7 @@ name: Release Installers
 #   · push tag  v*          —— 正式发版
 #   · workflow_dispatch     —— 手工出包（可传 agent ref / 版本号）
 #
-# 跨仓：二进制来自 mynet_agent-V2，安装器脚本在本仓。
+# 跨仓：二进制来自 mynet_agent，安装器脚本在本仓。
 # tag 发版时优先用同名 tag 的 agent；没有就用 agent 的默认分支。
 #
 # 平台分工（不能省，工具链是 OS 绑定的）：
@@ -23,7 +23,7 @@ on:
   workflow_dispatch:
     inputs:
       agent_ref:
-        description: "mynet_agent-V2 的 git ref（tag/branch/sha），留空则用同名 tag 或默认分支"
+        description: "mynet_agent 的 git ref（tag/branch/sha），留空则用同名 tag 或默认分支"
         required: false
         default: ""
       version:
@@ -44,8 +44,8 @@ concurrency:
 
 env:
   GO_VERSION: "1.22"
-  AGENT_REPO: mynet-club/mynet_agent-V2
-  GUI_REPO: mynet-club/mynet_gui   # 用户 2026-10-10 确认
+  AGENT_REPO: mynet-club/mynet_agent
+  GUI_REPO: mynet-club/mynet_gui   # 用户 2026-10-10 确认（不带 -V2）
 
 jobs:
   # ── 版本号：tag 优先；手工跑时用输入或 v0.0.0-ci.<run> ──────────
@@ -362,6 +362,6 @@ jobs:
             | macOS | `mynet_agent_darwin_*.dmg` | 打开 dmg → 双击 .pkg |
             | Windows | `mynet_agent_windows_*.exe` | 双击安装向导 |
 
-            完整步骤见 [docs/INSTALL.md](https://github.com/mynet-club/mynet_desktop-V2/blob/main/docs/INSTALL.md)。
+            完整步骤见 [docs/INSTALL.md](https://github.com/mynet-club/mynet_desktop/blob/main/docs/INSTALL.md)。
 
             > 未代码签名：macOS Gatekeeper / Windows SmartScreen 首次打开会拦，需手动放行。
