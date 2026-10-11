@@ -59,19 +59,17 @@ jobs:
         id: ver
         run: |
           set -euo pipefail
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            V="${GITHUB_REF_NAME}"
-            AGENT_REF="${GITHUB_REF_NAME}"
-          else
-            V="${{ github.event.inputs.version }}"
-            if [ -z "$V" ]; then
-              V="v0.0.0-ci.${{ github.run_number }}"
-            fi
-            AGENT_REF="${{ github.event.inputs.agent_ref }}"
-            if [ -z "$AGENT_REF" ]; then
-              AGENT_REF=""
-            fi
+          # 显式输入**优先**（dispatch 时可锁两仓 ref —— 即便 ref 本身是 tag）；
+          # 没传才按老口径回落：tag → 同名；分支 → v0.0.0-ci.<run>。
+          # 旧写法在 ref_type==tag 时无条件取 GITHUB_REF_NAME，把 dispatch 传的
+          # agent_ref/gui_ref 静默丢掉（2026-10-11 实测被这条坑）。
+          V="${{ github.event.inputs.version }}"
+          if [ -z "$V" ]; then
+            if [ "${GITHUB_REF_TYPE}" = "tag" ]; then V="${GITHUB_REF_NAME}"; else V="v0.0.0-ci.${{ github.run_number }}"; fi
           fi
+          # agent_ref 空 = 用 agent 仓默认分支（老口径）；tag 时回落同名。
+          AGENT_REF="${{ github.event.inputs.agent_ref }}"
+          if [ -z "$AGENT_REF" ] && [ "${GITHUB_REF_TYPE}" = "tag" ]; then AGENT_REF="${GITHUB_REF_NAME}"; fi
           # ctl 的 parseFilename 要求版本段以小写 v 开头
           case "$V" in
             v*) ;;
@@ -79,7 +77,7 @@ jobs:
           esac
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "agent_ref=$AGENT_REF" >> "$GITHUB_OUTPUT"
-          echo "version=$V agent_ref=${AGENT_REF:-'(auto)'}"
+          echo "version=$V agent_ref=$AGENT_REF"
 
   # ── 二进制：make dist（6 平台，含 windows .exe）──────────────
   build-binaries:
