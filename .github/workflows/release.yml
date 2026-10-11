@@ -1,6 +1,6 @@
 name: Release Installers
 
-# 打三平台安装器并挂到 GitHub Release（E-7）。
+# 打三平台安装器并挂到 GitHub Release（E-7）+ 镜像到 ctl（公开下载面）。
 #
 # 触发：
 #   · push tag  v*          —— 正式发版
@@ -14,7 +14,7 @@ name: Release Installers
 #   package-linux    ubuntu     校验 tgz（真包已在 build 产出）
 #   package-windows  ubuntu     makensis 交叉编 NSIS .exe
 #   package-macos    macos-14   pkgbuild + hdiutil（必须 macOS）
-#   publish          ubuntu     归并产物 → GitHub Release
+#   publish          ubuntu     归并产物 → GitHub Release + 镜像到 ctl
 
 on:
   push:
@@ -365,3 +365,40 @@ jobs:
             完整步骤见 [docs/INSTALL.md](https://github.com/mynet-club/mynet_desktop/blob/main/docs/INSTALL.md)。
 
             > 未代码签名：macOS Gatekeeper / Windows SmartScreen 首次打开会拦，需手动放行。
+
+      # 分发镜像：同一批产物也发到 ctl（/d/ 公开下载面），与 GitHub Release 同集。
+      # 幂等 = 先探 /d/<product>/<file>：200 已发 → SKIP（ctl 的 releases 有唯一键，
+      # 重推同版本会 500，见 build_openwrt.yml 同源说明）。
+      - name: Publish installers to ctl
+        env:
+          CTL_URL: ${{ secrets.CTL_URL }}
+          CTL_TOKEN: ${{ secrets.CTL_RELEASE_TOKEN }}
+          VER: ${{ needs.version.outputs.version }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          set -euo pipefail
+          [ -n "$CTL_URL" ]   || { echo "ERROR: 缺 secrets.CTL_URL（ctl 基址）"; exit 1; }
+          [ -n "$CTL_TOKEN" ] || { echo "ERROR: 缺 secrets.CTL_RELEASE_TOKEN（scope=release:upload）"; exit 1; }
+          stable=0; [ "$REF_TYPE" = "tag" ] && stable=1
+          pub() { # product platform arch file
+            f=$(basename "$4")
+            if [ "$(curl -sS --max-time 60 -o /dev/null -w '%{http_code}' "$CTL_URL/d/$1/$f" || echo 000)" = "200" ]; then
+              echo "SKIP: $f 已在下载面"; return 0; fi
+            echo "→ publish $1 $2 $3 $f (is_stable=$stable)"
+            curl -sS -f -X POST "$CTL_URL/api/v2/releases" \
+              -H "Authorization: Bearer $CTL_TOKEN" \
+              -F "product=$1" -F "version=${VER}" -F "platform=$2" -F "arch=$3" \
+              -F "is_stable=$stable" -F "file=@$4"; echo
+          }
+          n=0
+          for f in assets/mynet_agent_*; do
+            [ -f "$f" ] || continue
+            b=$(basename "$f")
+            rest=${b#mynet_agent_}
+            platform=${rest%%_*}
+            arch=${rest#*_}; arch=${arch%%_*}
+            case "$b" in *.tgz|*.zip|*.exe|*.pkg|*.dmg) ;; *) echo "跳过 $b（扩展名不在白名单）"; continue ;; esac
+            case "$platform" in linux|darwin|windows|freebsd|openbsd) ;; *) echo "跳过 $b（platform 不在 ctl 枚举）"; continue ;; esac
+            pub mynet_agent "$platform" "$arch" "$f"; n=$((n+1))
+          done
+          [ "$n" -gt 0 ] || { echo "ERROR: assets/ 无可发布的安装包（期望 mynet_agent_{platform}_{arch}_{ver}.{tgz,zip,exe,pkg,dmg}）"; exit 1; }
