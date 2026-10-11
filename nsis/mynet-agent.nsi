@@ -6,7 +6,7 @@
 ;
 ; 安装过程：
 ;   1. 选目录（默认 C:\Program Files\MyNet）
-;   2. 落盘 mynet / mynetd / mynet_gateway / webui.html
+;   2. 落盘 mynet / mynetd / mynet_tray / webui.html
 ;   3. **服务装配委托 `mynet install`**（SEC_START）：它写 $ProgramData\MyNet\mynetd.env、
 ;      `sc create mynetd` + start、注册托盘自启、并拉起 WebUI —— 安装器只落文件。
 ;   4. 加 PATH、写卸载项
@@ -83,7 +83,9 @@ Section "核心组件（必选）" SEC_CORE
   SetOutPath "$INSTDIR\bin"
   File "${SRCDIR}\mynet.exe"
   File "${SRCDIR}\mynetd.exe"
-  File "${SRCDIR}\mynet_gateway.exe"
+  ; ⚠️ 客户端包**不含** mynet_gateway —— 它是**服务端**组件（见 mynet_agent/scripts/pack.sh）。
+  ; 此前这里无条件 File mynet_gateway.exe，而 `make dist` 从不产出它 → makensis 编译即失败
+  ; （2026-10-11 首次发布实测）。
   File /nonfatal "${SRCDIR}\mynet_tray.exe"
   File /nonfatal "${SRCDIR}\webui.html"
 
@@ -170,7 +172,6 @@ Section "Uninstall"
 
   Delete "$INSTDIR\bin\mynet.exe"
   Delete "$INSTDIR\bin\mynetd.exe"
-  Delete "$INSTDIR\bin\mynet_gateway.exe"
   Delete "$INSTDIR\bin\mynet_tray.exe"
   Delete "$INSTDIR\bin\webui.html"
   Delete "$INSTDIR\driver\gnb\bin\wintun.dll"

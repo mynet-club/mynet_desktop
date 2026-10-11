@@ -313,7 +313,8 @@ jobs:
             echo "── $p ──"
             pkgutil --payload-files "$p" | head -30
             # 三个关键路径必须在
-            for need in '/opt/mynet/bin/mynetd' 'club.mynet.mynetd.plist' '/opt/mynet/bin/mynet'; do
+            # ⚠️ pkg **不再自带** plist（H2 裁定：服务装配归 `mynet install`）。
+            for need in '/opt/mynet/bin/mynetd' '/opt/mynet/bin/mynet' 'Applications/MyNet.app/Contents/Info.plist'; do
               pkgutil --payload-files "$p" | grep -F "$need" >/dev/null \
                 || { echo "✗ $p 缺 $need" >&2; exit 1; }
             done
