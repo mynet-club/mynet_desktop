@@ -403,6 +403,7 @@ jobs:
               -F "is_stable=$stable" -F "file=@$4"; echo
           }
           n=0
+          seen=""
           for f in assets/mynet_agent_*; do
             [ -f "$f" ] || continue
             b=$(basename "$f")
@@ -411,6 +412,13 @@ jobs:
             arch=${rest#*_}; arch=${arch%%_*}
             case "$b" in *.tgz|*.zip|*.exe|*.pkg|*.dmg) ;; *) echo "跳过 $b（扩展名不在白名单）"; continue ;; esac
             case "$platform" in linux|darwin|windows|freebsd|openbsd) ;; *) echo "跳过 $b（platform 不在 ctl 枚举）"; continue ;; esac
+            # ctl 的 releases 唯一键 = product+version+platform+arch+variant，**不含扩展名**：
+            # 同 platform+arch 发两件（如 darwin 的 .dmg 与 .pkg）第二件必 500。
+            # 按仓内既有口径「每个 platform+arch 一件」——留在按名排序里先出现的那个
+            # （darwin→.dmg 内含 .pkg；windows→.exe），其余显式跳过、不静默。
+            key="$platform/$arch"
+            case " $seen " in *" $key "*) echo "跳过 $b（$key 已发过一件；ctl 唯一键不含扩展名）"; continue ;; esac
+            seen="$seen $key"
             pub mynet_agent "$platform" "$arch" "$f"; n=$((n+1))
           done
           [ "$n" -gt 0 ] || { echo "ERROR: assets/ 无可发布的安装包（期望 mynet_agent_{platform}_{arch}_{ver}.{tgz,zip,exe,pkg,dmg}）"; exit 1; }
