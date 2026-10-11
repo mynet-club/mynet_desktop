@@ -6,6 +6,13 @@ node_modules/
 *.o
 *.a
 
+# 例外：nsis 的 wintun.dll 是**安装器资源文件**，按 nsis/wintun-provenance.md 应随仓入库
+# （guard C4 白名单 .guard-c4-allow 已放行该路径）。此前它被上面的 vendor/ 连带忽略 →
+# 从未入库 → CI 出 Windows 安装器时缺件（2026-10-11 实测）。
+!nsis/vendor/
+!nsis/vendor/wintun/
+!nsis/vendor/wintun/wintun.dll
+
 # 本地状态（含密钥，绝不入库 —— make guard A3 会拦）
 var/
 *.pem

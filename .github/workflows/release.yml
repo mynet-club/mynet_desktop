@@ -260,6 +260,19 @@ jobs:
         with:
           path: mynet_desktop
 
+      - name: Checkout mynet_agent（**源码**：本腿要补编 darwin mynet_tray）
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.AGENT_REPO }}
+          ref: ${{ needs.version.outputs.agent_ref || '' }}
+          path: mynet_agent
+
+      - name: Set up Go（补编 mynet_tray 需要；此前缺这步 → go 命令找不到）
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: mynet_agent/go.sum
+
       - name: Download agent dist
         uses: actions/download-artifact@v4
         with:
