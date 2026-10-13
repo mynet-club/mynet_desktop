@@ -416,7 +416,7 @@ for f in $FILES; do
       ;;
   esac
   if [ -n "$c4_hit" ]; then
-    bad "C4 编译产物不得入库（$c4_hit）: $f —— 删掉，或把构建输出指到仓库外"
+    bad "C4 编译产物不得入库（${c4_hit}）: ${f} —— 删掉，或把构建输出指到仓库外"
     c4=1
   fi
 done
