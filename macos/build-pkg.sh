@@ -8,7 +8,7 @@
 # 产物：dist/mynet_agent_darwin_<arch>_<version>.pkg
 # 布局：
 #   /Applications/MyNet.app          ← 启动台图标（托盘 Agent）
-#   /opt/mynet/bin/{mynet,mynetd,mynet_gateway,mynet_tray,webui.html}
+#   /opt/mynet/bin/{mynet,mynetd,mynet_gateway,mynet_tray}（WebUI 已 embed 进 mynetd，无 webui.html）
 #   /opt/mynet/share/INSTALL.txt
 #
 # ⚠️ 本 pkg **不装 launchd plist**：服务装配全部委托 `mynet install`
@@ -61,9 +61,6 @@ if [ -f "$AGENT_DIST/mynet_gateway" ]; then
 fi
 if [ -f "$AGENT_DIST/mynet_tray" ]; then
   install -m 0755 "$AGENT_DIST/mynet_tray" "$PAYLOAD/opt/mynet/bin/"
-fi
-if [ -f "$AGENT_DIST/webui.html" ]; then
-  install -m 0644 "$AGENT_DIST/webui.html"    "$PAYLOAD/opt/mynet/bin/"
 fi
 
 # ── 1b. MyNet.app（启动台/应用程序里的图标入口）──────────────

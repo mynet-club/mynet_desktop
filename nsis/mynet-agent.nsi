@@ -6,7 +6,7 @@
 ;
 ; 安装过程：
 ;   1. 选目录（默认 C:\Program Files\MyNet）
-;   2. 落盘 mynet / mynetd / mynet_tray / webui.html
+;   2. 落盘 mynet / mynetd / mynet_tray（WebUI 已 embed 进 mynetd，无 webui.html）
 ;   3. **服务装配委托 `mynet install`**（SEC_START）：它写 $ProgramData\MyNet\mynetd.env、
 ;      `sc create mynetd` + start、注册托盘自启、并拉起 WebUI —— 安装器只落文件。
 ;   4. 加 PATH、写卸载项
@@ -87,7 +87,6 @@ Section "核心组件（必选）" SEC_CORE
   ; 此前这里无条件 File mynet_gateway.exe，而 `make dist` 从不产出它 → makensis 编译即失败
   ; （2026-10-11 首次发布实测）。
   File /nonfatal "${SRCDIR}\mynet_tray.exe"
-  File /nonfatal "${SRCDIR}\webui.html"
 
   ; 驱动依赖（A 层文件交付）：wintun.dll 必须与 gnb.exe **同目录** —— gnb 用
   ; LoadLibraryExW(..., LOAD_LIBRARY_SEARCH_APPLICATION_DIR)。实测 gnb.exe 在
@@ -173,7 +172,7 @@ Section "Uninstall"
   Delete "$INSTDIR\bin\mynet.exe"
   Delete "$INSTDIR\bin\mynetd.exe"
   Delete "$INSTDIR\bin\mynet_tray.exe"
-  Delete "$INSTDIR\bin\webui.html"
+  Delete "$INSTDIR\bin\webui.html"   ; 旧版落盘件，卸载清遗留（G1-c 后产物不再带）
   Delete "$INSTDIR\driver\gnb\bin\wintun.dll"
   RMDir  "$INSTDIR\driver\gnb\bin"
   Delete "$INSTDIR\Uninstall.exe"

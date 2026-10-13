@@ -161,7 +161,7 @@ sh mynet_desktop/macos/build-dmg.sh \
 布局：
 
 ```
-/opt/mynet/bin/{mynet,mynetd,mynet_gateway,webui.html}
+/opt/mynet/bin/{mynet,mynetd,mynet_gateway}   # WebUI 已 embed 进 mynetd，无 webui.html
 /Library/LaunchDaemons/com.mynet.mynetd.plist
 /var/lib/mynet/          节点状态（卸载默认保留）
 /var/log/mynet/mynetd.{log,err}
