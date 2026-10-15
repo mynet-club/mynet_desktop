@@ -227,6 +227,177 @@ test_install() {
   trap - EXIT INT TERM
 }
 
+# 安装器来源复核行为（DC-3）：check-installer-sources.sh 必须
+#   ① 一致通过 ② 不一致拒绝 ③ 取不到 SOURCES 拒绝（不能静默放过）
+#   ④ 归档类型拒绝（归档走 check-package-sources，不许混用）
+test_installer_sources() {
+  echo "▸ test · 安装器来源复核（DC-3）"
+  _t=$(mktemp -d)
+  trap 'rm -rf "$_t"' EXIT INT TERM
+
+  _exp="$_t/expected.txt"
+  printf 'format=1\nagent_sha=fixture-a\ngui_sha=fixture-g\n' > "$_exp"
+  _other="$_t/other.txt"
+  printf 'format=1\nagent_sha=different\ngui_sha=fixture-g\n' > "$_other"
+
+  # ① 目录形态：一致 → 过
+  mkdir -p "$_t/dist_ok"
+  cp "$_exp" "$_t/dist_ok/SOURCES.txt"
+  if _out=$(sh "$ROOT/scripts/check-installer-sources.sh" "$_t/dist_ok" "$_exp" 2>&1); then
+    ok "目录 SOURCES 一致时通过"
+  else
+    bad "目录 SOURCES 一致却失败：$(printf '%s' "$_out" | head -1)"
+  fi
+
+  # ② 目录形态：不一致 → 拒
+  mkdir -p "$_t/dist_bad"
+  cp "$_other" "$_t/dist_bad/SOURCES.txt"
+  if _out=$(sh "$ROOT/scripts/check-installer-sources.sh" "$_t/dist_bad" "$_exp" 2>&1); then
+    bad "目录 SOURCES 不一致却通过"
+  else
+    ok "目录 SOURCES 不一致时拒绝"
+  fi
+
+  # ③ 目录缺 SOURCES → 拒
+  mkdir -p "$_t/dist_empty"
+  if _out=$(sh "$ROOT/scripts/check-installer-sources.sh" "$_t/dist_empty" "$_exp" 2>&1); then
+    bad "目录缺 SOURCES 却通过"
+  else
+    ok "目录缺 SOURCES 时拒绝"
+  fi
+
+  # ④ exe + sidecar：一致 → 过
+  printf 'MZ-fake-installer' > "$_t/mynet_agent_windows_amd64_v0.0.0-test.exe"
+  cp "$_exp" "$_t/mynet_agent_windows_amd64_v0.0.0-test.exe.SOURCES.txt"
+  if _out=$(sh "$ROOT/scripts/check-installer-sources.sh" "$_t/mynet_agent_windows_amd64_v0.0.0-test.exe" "$_exp" 2>&1); then
+    ok "exe sidecar 一致时通过"
+  else
+    bad "exe sidecar 一致却失败：$(printf '%s' "$_out" | head -1)"
+  fi
+
+  # ⑤ exe + sidecar 不一致 → 拒
+  cp "$_other" "$_t/mynet_agent_windows_amd64_v0.0.0-test.exe.SOURCES.txt"
+  if _out=$(sh "$ROOT/scripts/check-installer-sources.sh" "$_t/mynet_agent_windows_amd64_v0.0.0-test.exe" "$_exp" 2>&1); then
+    bad "exe sidecar 不一致却通过"
+  else
+    ok "exe sidecar 不一致时拒绝"
+  fi
+
+  # ⑥ exe 无 sidecar 且取不到内嵌 SOURCES → 拒（不能静默放过）
+  rm -f "$_t/mynet_agent_windows_amd64_v0.0.0-test.exe.SOURCES.txt"
+  if _out=$(sh "$ROOT/scripts/check-installer-sources.sh" "$_t/mynet_agent_windows_amd64_v0.0.0-test.exe" "$_exp" 2>&1); then
+    # 若本机有 7z 且假 exe 里没有 SOURCES，也应失败；若 7z 把假 exe 解出点什么仍找不到 SOURCES，同样失败。
+    # 只有「解出且一致」才过 —— 假 exe 不可能走到那条路，所以这里过 = 缺陷。
+    bad "exe 无来源记录却通过（复核不了不算通过）"
+  else
+    ok "exe 取不到 SOURCES 时拒绝（不静默放过）"
+  fi
+
+  # ⑦ kind 判定：归档可核（解出 SOURCES）；未知扩展名拒绝
+  # 归档好路径：内含 SOURCES → 过
+  _tgz_dir="$_t/mynet_agent_linux_amd64_v0.0.0-test"
+  mkdir -p "$_tgz_dir"
+  cp "$_exp" "$_tgz_dir/SOURCES.txt"
+  tar -czf "$_t/mynet_agent_linux_amd64_v0.0.0-test.tgz" -C "$_t" "mynet_agent_linux_amd64_v0.0.0-test"
+  if _out=$(sh "$ROOT/scripts/check-installer-sources.sh" "$_t/mynet_agent_linux_amd64_v0.0.0-test.tgz" "$_exp" 2>&1); then
+    ok "归档 .tgz 内含 SOURCES 时通过"
+  else
+    bad "归档 .tgz 内含 SOURCES 却失败：$(printf '%s' "$_out" | head -1)"
+  fi
+  # 归档 SOURCES 不一致 → 拒
+  cp "$_other" "$_tgz_dir/SOURCES.txt"
+  tar -czf "$_t/mynet_agent_linux_amd64_v0.0.0-test.tgz" -C "$_t" "mynet_agent_linux_amd64_v0.0.0-test"
+  if _out=$(sh "$ROOT/scripts/check-installer-sources.sh" "$_t/mynet_agent_linux_amd64_v0.0.0-test.tgz" "$_exp" 2>&1); then
+    bad "归档 SOURCES 不一致却通过"
+  else
+    ok "归档 SOURCES 不一致时拒绝"
+  fi
+  # 未知扩展名 → 拒（不猜 kind）
+  printf 'unknown' > "$_t/mystery.bin"
+  if _out=$(sh "$ROOT/scripts/check-installer-sources.sh" "$_t/mystery.bin" "$_exp" 2>&1); then
+    bad "未知扩展名却通过（应拒绝、不猜 kind）"
+  else
+    ok "未知扩展名时拒绝（不猜 kind）"
+  fi
+
+  # ⑧ 期望 SOURCES 为空 → 拒
+  : > "$_t/empty-expected.txt"
+  if _out=$(sh "$ROOT/scripts/check-installer-sources.sh" "$_t/dist_ok" "$_t/empty-expected.txt" 2>&1); then
+    bad "期望 SOURCES 为空却通过"
+  else
+    ok "期望 SOURCES 为空时拒绝"
+  fi
+
+  trap - EXIT INT TERM
+  rm -rf "$_t"
+}
+
+# 安装器构建脚本拒绝路径（DC-3）：缺 SOURCES / kind 错配必须失败且不产半包
+test_installer_build_rejects() {
+  echo "▸ test · 安装器构建脚本拒绝路径（DC-3）"
+  _t=$(mktemp -d)
+  trap 'rm -rf "$_t"' EXIT INT TERM
+
+  # ① build-nsis：缺 SOURCES → 拒，不产包
+  _w="$_t/mynet_agent_windows_amd64_v0.0.0-test"
+  mkdir -p "$_w"
+  printf 'MZ-fake' > "$_w/mynet.exe"
+  printf 'MZ-fake' > "$_w/mynetd.exe"
+  if _out=$(sh "$ROOT/nsis/build-nsis.sh" "$_w" v0.0.0-test 2>&1); then
+    bad "build-nsis 缺 SOURCES 却成功"
+  else
+    ok "build-nsis 缺 SOURCES 时拒绝"
+  fi
+  if ls "$ROOT"/dist/mynet_agent_windows_*v0.0.0-test* >/dev/null 2>&1; then
+    bad "build-nsis 缺 SOURCES 仍产出半包"
+    rm -f "$ROOT"/dist/mynet_agent_windows_*v0.0.0-test*
+  else
+    ok "build-nsis 缺 SOURCES 不产半包"
+  fi
+
+  # ② build-nsis：kind 错配（darwin 目录）→ 拒，报 kind 而非缺二进制
+  _d="$_t/mynet_agent_darwin_arm64_v0.0.0-test"
+  mkdir -p "$_d"
+  printf 'fake' > "$_d/mynet"
+  printf 'fake' > "$_d/mynetd"
+  printf 'format=1\nagent_sha=x\n' > "$_d/SOURCES.txt"
+  _out=$(sh "$ROOT/nsis/build-nsis.sh" "$_d" v0.0.0-test 2>&1) || true
+  case "$_out" in
+    *windows*) ok "build-nsis kind 错配时报 windows 产物目录" ;;
+    *)        bad "build-nsis kind 错配提示不对：$(printf '%s' "$_out" | head -1)" ;;
+  esac
+
+  # ③ build-pkg：缺 SOURCES → 拒
+  _d2="$_t/mynet_agent_darwin_arm64_v0.0.0-test2"
+  mkdir -p "$_d2"
+  printf 'fake' > "$_d2/mynet"
+  printf 'fake' > "$_d2/mynetd"
+  if _out=$(sh "$ROOT/macos/build-pkg.sh" "$_d2" v0.0.0-test 2>&1); then
+    bad "build-pkg 缺 SOURCES 却成功"
+  else
+    ok "build-pkg 缺 SOURCES 时拒绝"
+  fi
+
+  # ④ build-pkg：kind 错配（windows 目录）→ 拒，报 kind
+  printf 'format=1\nagent_sha=x\n' > "$_w/SOURCES.txt"
+  _out=$(sh "$ROOT/macos/build-pkg.sh" "$_w" v0.0.0-test 2>&1) || true
+  case "$_out" in
+    *darwin*) ok "build-pkg kind 错配时报 darwin 产物目录" ;;
+    *)        bad "build-pkg kind 错配提示不对：$(printf '%s' "$_out" | head -1)" ;;
+  esac
+
+  # ⑤ build-dmg：缺 sidecar → 拒
+  printf 'fake-pkg' > "$_t/mynet_agent_darwin_arm64_v0.0.0-test.pkg"
+  if _out=$(sh "$ROOT/macos/build-dmg.sh" "$_t/mynet_agent_darwin_arm64_v0.0.0-test.pkg" 2>&1); then
+    bad "build-dmg 缺 sidecar 却成功"
+  else
+    ok "build-dmg 缺 sidecar 时拒绝"
+  fi
+
+  trap - EXIT INT TERM
+  rm -rf "$_t"
+}
+
 lint_installers() {
   echo "▸ lint · 安装器骨架（E-7）"
   for f in \
@@ -255,11 +426,77 @@ lint_installers() {
   fi
 }
 
+# 安装器来源契约（DC-3）：构建脚本必须要求 SOURCES.txt、嵌入包内、写 sidecar。
+lint_installer_sources() {
+  echo "▸ lint · 安装器来源记录与复核（DC-3）"
+
+  if [ -f "$ROOT/scripts/check-installer-sources.sh" ]; then
+    ok "存在 check-installer-sources.sh"
+  else
+    bad "缺 scripts/check-installer-sources.sh（安装器来源复核）"
+  fi
+
+  # build-nsis.sh：要求 SOURCES.txt + 写 sidecar
+  _nsis_build="$ROOT/nsis/build-nsis.sh"
+  if grep -q 'SOURCES\.txt' "$_nsis_build" 2>/dev/null; then
+    ok "build-nsis.sh 引用 SOURCES.txt"
+  else
+    bad "build-nsis.sh 未引用 SOURCES.txt（安装器须带来源记录）"
+  fi
+  if grep -q 'SOURCES_TXT=' "$_nsis_build" 2>/dev/null || grep -q 'SOURCES\.txt' "$_nsis_build" 2>/dev/null; then
+    if grep -q 'SIDECAR\|SOURCES\.txt"' "$_nsis_build" 2>/dev/null; then
+      ok "build-nsis.sh 写来源 sidecar"
+    else
+      bad "build-nsis.sh 未写来源 sidecar（无 7z 环境无法复核）"
+    fi
+  fi
+  # NSI 必须把 SOURCES.txt 打进包内（无 /nonfatal：缺则编译失败）
+  _nsi="$ROOT/nsis/mynet-agent.nsi"
+  if grep -q 'SOURCES\.txt' "$_nsi" 2>/dev/null; then
+    ok "nsi 嵌入 SOURCES.txt"
+  else
+    bad "nsi 未嵌入 SOURCES.txt（装完无法核对多仓 SHA）"
+  fi
+
+  # build-pkg.sh：要求 SOURCES.txt + 落 payload + sidecar
+  _pkg_build="$ROOT/macos/build-pkg.sh"
+  if grep -q 'SOURCES\.txt' "$_pkg_build" 2>/dev/null; then
+    ok "build-pkg.sh 引用 SOURCES.txt"
+  else
+    bad "build-pkg.sh 未引用 SOURCES.txt"
+  fi
+  if grep -q 'share/SOURCES\.txt\|SOURCES\.txt' "$_pkg_build" 2>/dev/null; then
+    ok "build-pkg.sh 嵌入 SOURCES.txt"
+  else
+    bad "build-pkg.sh 未嵌入 SOURCES.txt"
+  fi
+
+  # build-dmg.sh：要求 sidecar + 内嵌
+  _dmg_build="$ROOT/macos/build-dmg.sh"
+  if grep -q 'SOURCES\.txt' "$_dmg_build" 2>/dev/null; then
+    ok "build-dmg.sh 引用 SOURCES.txt"
+  else
+    bad "build-dmg.sh 未引用 SOURCES.txt"
+  fi
+
+  # kind 归属：构建脚本必须拒绝错误平台目录
+  if grep -q 'mynet_agent_windows_' "$_nsis_build" 2>/dev/null; then
+    ok "build-nsis.sh 校验 windows 产物目录（kind 归属）"
+  else
+    bad "build-nsis.sh 未校验 windows 产物目录（可把 darwin 目录当安装器源）"
+  fi
+  if grep -q 'mynet_agent_darwin_' "$_pkg_build" 2>/dev/null; then
+    ok "build-pkg.sh 校验 darwin 产物目录（kind 归属）"
+  else
+    bad "build-pkg.sh 未校验 darwin 产物目录"
+  fi
+}
+
 # ── 调度 ─────────────────────────────────────────────────────
 case "$MODE" in
-  lint) lint_shell; lint_linux; lint_macos; lint_nsis; lint_installers ;;
-  test) test_install ;;
-  all)  lint_shell; lint_linux; lint_macos; lint_nsis; lint_installers; test_install ;;
+  lint) lint_shell; lint_linux; lint_macos; lint_nsis; lint_installers; lint_installer_sources ;;
+  test) test_install; test_installer_sources; test_installer_build_rejects ;;
+  all)  lint_shell; lint_linux; lint_macos; lint_nsis; lint_installers; lint_installer_sources; test_install; test_installer_sources; test_installer_build_rejects ;;
   *)    echo "用法：sh scripts/check.sh [lint|test|all]"; exit 2 ;;
 esac
 

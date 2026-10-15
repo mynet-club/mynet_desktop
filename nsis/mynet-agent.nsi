@@ -88,6 +88,11 @@ Section "核心组件（必选）" SEC_CORE
   ; （2026-10-11 首次发布实测）。
   File /nonfatal "${SRCDIR}\mynet_tray.exe"
 
+  ; 来源记录（DC-3）：SOURCES.txt 随包落 $INSTDIR，装完可核对多仓 SHA。
+  ; 缺文件时 makensis **编译即失败**（无 /nonfatal）—— 不产出无来源可复核的包。
+  SetOutPath "$INSTDIR"
+  File "${SRCDIR}\SOURCES.txt"
+
   ; 驱动依赖（A 层文件交付）：wintun.dll 必须与 gnb.exe **同目录** —— gnb 用
   ; LoadLibraryExW(..., LOAD_LIBRARY_SEARCH_APPLICATION_DIR)。实测 gnb.exe 在
   ; $INSTDIR\driver\gnb\bin，故 DLL 落同处。
@@ -173,6 +178,7 @@ Section "Uninstall"
   Delete "$INSTDIR\bin\mynetd.exe"
   Delete "$INSTDIR\bin\mynet_tray.exe"
   Delete "$INSTDIR\bin\webui.html"   ; 旧版落盘件，卸载清遗留（G1-c 后产物不再带）
+  Delete "$INSTDIR\SOURCES.txt"      ; 来源记录（DC-3）
   Delete "$INSTDIR\driver\gnb\bin\wintun.dll"
   RMDir  "$INSTDIR\driver\gnb\bin"
   Delete "$INSTDIR\Uninstall.exe"

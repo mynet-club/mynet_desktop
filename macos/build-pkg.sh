@@ -31,12 +31,28 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 AGENT_DIST=$(cd "$SRCDIR" && pwd)
 
+# kind 归属先于内容检查：目录归属错了就别再报「缺 mynet」误导排查
+case "$AGENT_DIST" in
+  *mynet_agent_darwin_*) ;;
+  *)
+    echo "✗ $AGENT_DIST 不是 darwin 产物目录（build-pkg 只接受 mynet_agent_darwin_*）" >&2
+    exit 1
+    ;;
+esac
+
 for b in mynet mynetd; do
   if [ ! -f "$AGENT_DIST/$b" ]; then
     echo "✗ 缺 $AGENT_DIST/$b —— 先在 mynet_agent 跑 make dist" >&2
     exit 1
   fi
 done
+
+# 来源记录（DC-3）：安装器必须携带与 agent dist 同源的 SOURCES.txt。
+SOURCES_TXT="$AGENT_DIST/SOURCES.txt"
+if [ ! -s "$SOURCES_TXT" ]; then
+  echo "✗ 缺 $SOURCES_TXT —— agent dist 必须带 SOURCES.txt（build-sources.sh 产出）" >&2
+  exit 1
+fi
 
 # 从产物目录名反推 arch：mynet_agent_darwin_<arch>_<ver>
 base=$(basename "$AGENT_DIST")
@@ -56,6 +72,8 @@ mkdir -p \
 
 install -m 0755 "$AGENT_DIST/mynet"         "$PAYLOAD/opt/mynet/bin/"
 install -m 0755 "$AGENT_DIST/mynetd"        "$PAYLOAD/opt/mynet/bin/"
+# 来源记录随包落 share/，装完可核对多仓 SHA（DC-3）
+install -m 0644 "$SOURCES_TXT"              "$PAYLOAD/opt/mynet/share/SOURCES.txt"
 if [ -f "$AGENT_DIST/mynet_gateway" ]; then
   install -m 0755 "$AGENT_DIST/mynet_gateway" "$PAYLOAD/opt/mynet/bin/"
 fi
@@ -155,5 +173,9 @@ pkgbuild \
   --ownership recommended \
   "$PKG"
 
+# 来源 sidecar：无 xar/hdiutil 环境下也能复核（check-installer-sources.sh 优先读它）
+cp "$SOURCES_TXT" "${PKG}.SOURCES.txt"
+
 echo "✓ $PKG"
-ls -la "$PKG"
+echo "✓ ${PKG}.SOURCES.txt（来源 sidecar）"
+ls -la "$PKG" "${PKG}.SOURCES.txt"

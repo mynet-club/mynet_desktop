@@ -36,12 +36,29 @@ else
   exit 1
 fi
 
+# kind 归属先于内容检查：目录归属错了就别再报「缺 mynet.exe」误导排查
+case "$SRC" in
+  *mynet_agent_windows_*) ;;
+  *)
+    echo "✗ $SRC 不是 windows 产物目录（build-nsis 只接受 mynet_agent_windows_*）" >&2
+    exit 1
+    ;;
+esac
+
 for b in mynet.exe mynetd.exe; do
   if [ ! -f "$SRC/$b" ]; then
     echo "✗ 缺 $SRC/$b —— 先在 mynet_agent 跑 make dist（含 windows）" >&2
     exit 1
   fi
 done
+
+# 来源记录（DC-3）：安装器必须携带与 agent dist 同源的 SOURCES.txt。
+# 缺来源记录不产包 —— 否则装出去无法复核多仓 SHA。
+SOURCES_TXT="$SRC/SOURCES.txt"
+if [ ! -s "$SOURCES_TXT" ]; then
+  echo "✗ 缺 $SOURCES_TXT —— agent dist 必须带 SOURCES.txt（build-sources.sh 产出）" >&2
+  exit 1
+fi
 
 # 驱动依赖（随包分发）：wintun.dll 在仓内 nsis/vendor/（provenance/SHA 见
 # nsis/wintun-provenance.md）。换文件必须同步该文档与本行的固定 SHA。
@@ -77,6 +94,11 @@ fi
 OUT_DIR="$ROOT/dist"
 mkdir -p "$OUT_DIR"
 OUTFILE="$OUT_DIR/mynet_agent_windows_${arch}_${VERSION}.exe"
+SIDECAR="${OUTFILE}.SOURCES.txt"
+
+# 先写 sidecar 再编包：任一步失败都不留可发布的半包（半成品 exe 也不留）。
+# sidecar 供 check-installer-sources.sh 在无 7z 环境下复核来源。
+cp "$SOURCES_TXT" "$SIDECAR"
 
 makensis \
   -DWINTUN_DLL="$WINTUN_DLL" \
@@ -88,8 +110,10 @@ makensis \
 
 if [ ! -s "$OUTFILE" ]; then
   echo "✗ makensis 退出成功但没产出 $OUTFILE" >&2
+  rm -f "$OUTFILE" "$SIDECAR"
   exit 1
 fi
 
 echo "✓ $OUTFILE"
-ls -la "$OUTFILE"
+echo "✓ $SIDECAR（来源 sidecar）"
+ls -la "$OUTFILE" "$SIDECAR"

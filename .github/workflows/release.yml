@@ -246,7 +246,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pkg-windows
-          path: mynet_desktop/dist/mynet_agent_windows_*.exe
+          path: |
+            mynet_desktop/dist/mynet_agent_windows_*.exe
+            mynet_desktop/dist/mynet_agent_windows_*.exe.SOURCES.txt
           if-no-files-found: error
           retention-days: 7
 
@@ -327,6 +329,8 @@ jobs:
           path: |
             mynet_desktop/dist/mynet_agent_darwin_*.pkg
             mynet_desktop/dist/mynet_agent_darwin_*.dmg
+            mynet_desktop/dist/mynet_agent_darwin_*.pkg.SOURCES.txt
+            mynet_desktop/dist/mynet_agent_darwin_*.dmg.SOURCES.txt
           if-no-files-found: error
           retention-days: 7
 
@@ -336,6 +340,11 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout mynet_desktop（来源复核脚本）
+        uses: actions/checkout@v4
+        with:
+          path: mynet_desktop
+
       - name: Download all packages
         uses: actions/download-artifact@v4
         with:
@@ -379,8 +388,8 @@ jobs:
             > 未代码签名：macOS Gatekeeper / Windows SmartScreen 首次打开会拦，需手动放行。
 
       # 分发镜像：同一批产物也发到 ctl（/d/ 公开下载面），与 GitHub Release 同集。
-      # 幂等 = 先探 /d/<product>/<file>：200 已发 → SKIP（ctl 的 releases 有唯一键，
-      # 重推同版本会 500，见 build_openwrt.yml 同源说明）。
+      # 幂等 = 先探 /d/<product>/<file>：200 已发 → **来源复核后**才 SKIP
+      # （DC-3：HTTP 200 不能证明多仓来源一致；来源不同必须拒绝，不是默默跳过）。
       - name: Publish installers to ctl
         env:
           CTL_URL: ${{ secrets.CTL_URL }}
@@ -394,8 +403,54 @@ jobs:
           stable=0; [ "$REF_TYPE" = "tag" ] && stable=1
           pub() { # product platform arch file
             f=$(basename "$4")
-            if [ "$(curl -sS --max-time 60 -o /dev/null -w '%{http_code}' "$CTL_URL/d/$1/$f" || echo 000)" = "200" ]; then
-              echo "SKIP: $f 已在下载面"; return 0; fi
+            # 期望 SOURCES：installer 用 sidecar；archive 从本地包内解出。
+            expected=$(mktemp)
+            trap 'rm -f "$expected"' RETURN
+            case "$f" in
+              *.tgz|*.tar.gz)
+                base=${f%.tgz}; base=${base%.tar.gz}
+                if ! tar -xzOf "$4" "${base}/SOURCES.txt" > "$expected" 2>/dev/null; then
+                  echo "ERROR: 本地归档 $f 内无 SOURCES.txt —— 来源记录缺失，拒绝发布" >&2
+                  exit 1
+                fi
+                ;;
+              *.zip)
+                base=${f%.zip}
+                if ! unzip -p "$4" "${base}/SOURCES.txt" > "$expected" 2>/dev/null; then
+                  echo "ERROR: 本地归档 $f 内无 SOURCES.txt —— 来源记录缺失，拒绝发布" >&2
+                  exit 1
+                fi
+                ;;
+              *.exe|*.pkg|*.dmg)
+                if [ ! -s "$4.SOURCES.txt" ]; then
+                  echo "ERROR: 安装器 $f 缺 sidecar $4.SOURCES.txt —— 无法复核来源，拒绝发布" >&2
+                  exit 1
+                fi
+                cp "$4.SOURCES.txt" "$expected"
+                ;;
+              *)
+                echo "ERROR: $f 类型不在 kind 白名单（archive= tgz/zip/tar.gz；installer=exe/pkg/dmg/ipk）" >&2
+                exit 1
+                ;;
+            esac
+            status=$(curl -sS --max-time 60 -o /dev/null -w '%{http_code}' "$CTL_URL/d/$1/$f" || echo 000)
+            if [ "$status" = "200" ]; then
+              # 已存在：下载后做来源复核。一致才 SKIP；不一致/复核不了一律拒绝。
+              existing=$(mktemp)
+              trap 'rm -f "$existing" "$expected"' RETURN
+              curl -sS --max-time 120 -o "$existing" "$CTL_URL/d/$1/$f"
+              # 安装器/归档来源复核：包内/旁 SOURCES 与期望逐字比对
+              if ! sh mynet_desktop/scripts/check-installer-sources.sh "$existing" "$expected"; then
+                echo "ERROR: $f 已在下载面但来源不一致 —— 选择新版本号，不得覆盖已发布 provenance" >&2
+                exit 1
+              fi
+              echo "SKIP: $f 已在下载面且来源复核通过"
+              return 0
+            fi
+            if [ "$status" != "404" ]; then
+              echo "ERROR: 下载探针 HTTP $status，停止发布" >&2
+              exit 1
+            fi
             echo "→ publish $1 $2 $3 $f (is_stable=$stable)"
             curl -sS -f -X POST "$CTL_URL/api/v2/releases" \
               -H "Authorization: Bearer $CTL_TOKEN" \
@@ -407,11 +462,20 @@ jobs:
           for f in assets/mynet_agent_*; do
             [ -f "$f" ] || continue
             b=$(basename "$f")
+            # sidecar 不是 release 资产，跳过（它只用于已存在版本的来源复核）
+            case "$b" in *.SOURCES.txt) continue ;; esac
             rest=${b#mynet_agent_}
             platform=${rest%%_*}
             arch=${rest#*_}; arch=${arch%%_*}
             case "$b" in *.tgz|*.zip|*.exe|*.pkg|*.dmg) ;; *) echo "跳过 $b（扩展名不在白名单）"; continue ;; esac
             case "$platform" in linux|darwin|windows|freebsd|openbsd) ;; *) echo "跳过 $b（platform 不在 ctl 枚举）"; continue ;; esac
+            # kind 归属（DC-3）：extension → kind 必须可判，拒绝未知扩展名冒充
+            kind=archive
+            case "$b" in
+              *.exe|*.dmg|*.pkg|*.ipk) kind=installer ;;
+              *.tgz|*.zip|*.tar.gz)    kind=archive ;;
+              *) echo "ERROR: $b 扩展名不在 kind 白名单（archive= tgz/zip/tar.gz；installer=exe/pkg/dmg/ipk）" >&2; exit 1 ;;
+            esac
             # ctl 的 releases 唯一键 = product+version+platform+arch+variant，**不含扩展名**：
             # 同 platform+arch 发两件（如 darwin 的 .dmg 与 .pkg）第二件必 500。
             # 按仓内既有口径「每个 platform+arch 一件」——留在按名排序里先出现的那个

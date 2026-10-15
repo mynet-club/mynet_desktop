@@ -29,6 +29,13 @@ if [ ! -f "$PKG" ]; then
   exit 1
 fi
 
+# 来源记录（DC-3）：优先 pkg 旁 sidecar，其次 agent dist 同源 SOURCES.txt。
+SOURCES_TXT="${PKG}.SOURCES.txt"
+if [ ! -s "$SOURCES_TXT" ]; then
+  echo "✗ 缺 $SOURCES_TXT —— 先跑 build-pkg.sh（会写来源 sidecar）" >&2
+  exit 1
+fi
+
 case "$(uname -s)" in
   Darwin) ;;
   *)
@@ -43,6 +50,8 @@ STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT INT TERM
 
 cp "$PKG" "$STAGE/MyNet Agent.pkg"
+# 来源记录进 dmg，挂载后可直接核对（DC-3）
+cp "$SOURCES_TXT" "$STAGE/SOURCES.txt"
 
 cat > "$STAGE/README.txt" <<'EOF'
 MyNet Agent — macOS 安装
@@ -76,5 +85,9 @@ hdiutil create \
   -format UDZO \
   "$OUT"
 
+# 来源 sidecar：无 hdiutil 环境下也能复核
+cp "$SOURCES_TXT" "${OUT}.SOURCES.txt"
+
 echo "✓ $OUT"
-ls -la "$OUT"
+echo "✓ ${OUT}.SOURCES.txt（来源 sidecar）"
+ls -la "$OUT" "${OUT}.SOURCES.txt"
