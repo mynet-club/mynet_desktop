@@ -6,7 +6,7 @@
 # V2-9 同源教训（`[ -f … ] && … || true` 让缺文件时静默产出空 ipk）。
 set -e
 PREFIX="${PREFIX:-/opt/mynet}"
-STATE="${STATE:-/var/lib/mynet}"
+STATE="${STATE:-/opt/mynet}"
 SCRIPT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 
 if ! install -d "${PREFIX}/bin" "${PREFIX}/conf"; then
@@ -14,7 +14,7 @@ if ! install -d "${PREFIX}/bin" "${PREFIX}/conf"; then
   exit 1
 fi
 
-# STATE 通常是 /var/lib/mynet，非 root 装时创建不了 —— 这不是错误，
+# STATE 通常是 /opt/mynet，非 root 装时创建不了 —— 这不是错误，
 # 但**不能假装创建成功了**（旧版无论成不成都打印 state=$STATE）。
 if install -d "${STATE}" 2>/dev/null; then
   STATE_NOTE="${STATE}（已创建）"

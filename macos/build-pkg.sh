@@ -17,7 +17,7 @@
 #
 # 安装过程（pkg 的 scripts/）：
 #   preinstall  — 停旧服务（legacy club.mynet.mynetd + com.mynet.mynetd），避免文件占用/双实例
-#   postinstall — 建 /var/lib/mynet，调 `mynet install` 装配服务并引导打开 WebUI
+#   postinstall — 建 /opt/mynet，调 `mynet install` 装配服务并引导打开 WebUI
 set -eu
 
 if [ $# -lt 1 ]; then

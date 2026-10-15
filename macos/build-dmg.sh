@@ -55,13 +55,13 @@ MyNet Agent — macOS 安装
 安装布局：
   /opt/mynet/bin/{mynet,mynetd,mynet_gateway}
   /Library/LaunchDaemons/club.mynet.mynetd.plist
-  /var/lib/mynet/          节点状态（卸载默认保留）
+  /opt/mynet/              节点状态与配置（卸载默认保留）
 
 卸载：
   sudo launchctl bootout system/club.mynet.mynetd
   sudo rm -f /Library/LaunchDaemons/club.mynet.mynetd.plist
   sudo rm -rf /opt/mynet
-  # 节点身份/密钥在 /var/lib/mynet，确认不要了再删
+  # 节点身份/密钥在 /opt/mynet/conf，确认不要了再删
 
 下一步（节点身份）：
   sudo /opt/mynet/bin/mynet setup --vpn-type gnb --back-pub <hex>

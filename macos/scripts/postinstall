@@ -6,12 +6,12 @@
 # 旧版曾在 payload 里塞 club.mynet.mynetd.plist 并自行 bootstrap；现统一由
 # `mynet install` 写 com.mynet.mynetd.plist，旧 label 在本步清除（迁移）。
 #
-# 布局：PREFIX=/opt/mynet，HOME=/var/lib/mynet。
+# 布局：PREFIX=/opt/mynet，HOME=/opt/mynet（2026-10-14 定稿）。
 # 缺 mynetd 必须失败 —— 静默装空壳是 V2-9 同源教训。
 set -u
 
 PREFIX=/opt/mynet
-MYNET_HOME=/var/lib/mynet
+MYNET_HOME=/opt/mynet
 LEGACY_LABEL=club.mynet.mynetd
 LEGACY_PLIST=/Library/LaunchDaemons/${LEGACY_LABEL}.plist
 BIN=$PREFIX/bin/mynetd

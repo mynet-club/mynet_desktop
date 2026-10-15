@@ -8,7 +8,7 @@
 | 项 | 约定 |
 |---|---|
 | **安装路径** | Linux/macOS `/opt/mynet` · Windows `C:\Program Files\MyNet` |
-| **状态/配置** | `/var/lib/mynet` · Windows `%ProgramData%\MyNet` |
+| **状态/配置** | `/opt/mynet` · Windows `%ProgramData%\MyNet` |
 | **默认网关** | `wss://gw.mynet.club`（安装时可改） |
 | **本机 API / 面板** | `http://127.0.0.1:8096/`（SSOT：`mynetd.DefaultLocalAPI`） |
 | **命名** | `mynet_agent_{platform}_{arch}_{v*}.{tgz\|zip\|exe\|pkg\|dmg}` |
@@ -97,7 +97,7 @@ sudo ./mynet install --gateways wss://gw.mynet.club
 | 参数 | 默认 | 说明 |
 |---|---|---|
 | `--prefix DIR` | `/opt/mynet` | 二进制安装目录 |
-| `--home DIR` | `/var/lib/mynet` | 状态目录（节点身份在这） |
+| `--home DIR` | `/opt/mynet` | 状态目录（节点身份在这） |
 | `--gateways URL[,URL]` | 必填 | 网关地址 |
 | `--gnb-bin PATH` | `/usr/local/bin/gnb` | gnb 可执行文件 |
 | `--no-enable` | — | 只写文件，不启动 |
@@ -113,7 +113,7 @@ PREFIX=/opt/mynet sudo sh mynet_desktop/scripts/install-linux.sh
 
 ```bash
 sudo ./mynet uninstall          # 停服务、删二进制与单元
-# 节点身份/密钥保留在 /var/lib/mynet，确认不要了再删
+# 节点身份/密钥保留在 /opt/mynet/conf，确认不要了再删
 ```
 
 ### 验证
@@ -156,14 +156,14 @@ sh mynet_desktop/macos/build-dmg.sh \
 | 时机 | 脚本 | 做什么 |
 |---|---|---|
 | 装之前 | `preinstall` | `launchctl bootout` 旧服务（升级时防占用/双实例） |
-| 装之后 | `postinstall` | 建 `/var/lib/mynet`、`/var/log/mynet`，`bootstrap` launchd |
+| 装之后 | `postinstall` | 建 `/opt/mynet`、`/var/log/mynet`，`bootstrap` launchd |
 
 布局：
 
 ```
 /opt/mynet/bin/{mynet,mynetd,mynet_gateway}   # WebUI 已 embed 进 mynetd，无 webui.html
 /Library/LaunchDaemons/com.mynet.mynetd.plist
-/var/lib/mynet/          节点状态（卸载默认保留）
+/opt/mynet/              节点状态与配置（卸载默认保留）
 /var/log/mynet/mynetd.{log,err}
 ```
 
@@ -173,7 +173,7 @@ sh mynet_desktop/macos/build-dmg.sh \
 sudo launchctl bootout system/com.mynet.mynetd
 sudo rm -f /Library/LaunchDaemons/com.mynet.mynetd.plist
 sudo rm -rf /opt/mynet
-# 确认不要节点身份了再：sudo rm -rf /var/lib/mynet
+# 确认不要节点身份了再：sudo rm -rf /opt/mynet
 ```
 
 ### 验证
