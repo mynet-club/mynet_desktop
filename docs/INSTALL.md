@@ -161,17 +161,35 @@ sh mynet_desktop/macos/build-dmg.sh \
 布局：
 
 ```
+/Applications/MyNet.app                       # 启动台/应用程序里的托盘入口（LSUIElement，不占 Dock）
+  └ Contents/MacOS/MyNet                      # 就是 mynet_tray 二进制
+/Library/LaunchAgents/club.mynet.tray.plist   # 托盘登录自启（gui 域，由 mynet install 写入）
 /opt/mynet/bin/{mynet,mynetd,mynet_gateway}   # WebUI 已 embed 进 mynetd，无 webui.html
 /Library/LaunchDaemons/com.mynet.mynetd.plist
 /opt/mynet/              节点状态与配置（卸载默认保留）
 /var/log/mynet/mynetd.{log,err}
 ```
 
+`MyNet.app` 是 `LSUIElement=true` 的纯菜单栏 agent，不在 Dock 占位。它归
+`/Library/LaunchAgents`，**下次登录**由 launchd 自动加载。
+
+pkg 安装期的 `postinstall` 跑在 `package_script_service` 域，`launchctl asuser`
+换了 uid 也进不去 `gui/<uid>` 的 bootstrap 上下文，bootstrap 恒返回
+`5: Input/output error` —— 这是平台限制，不是配置错。所以**双击 pkg 装完，
+菜单栏不会立刻出现图标**：请从启动台/应用程序打开 MyNet，或重新登录一次。
+
+`mynet install` 在 bootstrap 前会先跑 `launchctl enable gui/<uid>/club.mynet.tray`：
+job 一旦被 disable 过（历史卸载、或者有测试碰过真实 launchctl），少了这步
+即使从用户终端跑也照样 EIO。
+
 ### 卸载
 
 ```bash
 sudo launchctl bootout system/com.mynet.mynetd
 sudo rm -f /Library/LaunchDaemons/com.mynet.mynetd.plist
+launchctl bootout gui/$(id -u)/club.mynet.tray
+sudo rm -f /Library/LaunchAgents/club.mynet.tray.plist
+sudo rm -rf /Applications/MyNet.app
 sudo rm -rf /opt/mynet
 # 确认不要节点身份了再：sudo rm -rf /opt/mynet
 ```
